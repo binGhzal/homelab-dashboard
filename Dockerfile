@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1
-FROM node:24.21.0-bookworm-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6 AS build
+FROM node:26.10.0-bookworm-slim@sha256:662933cf47f013bc8e4beb31a6116448427a82057ba7c42c97e4c5ba766504c2 AS build
 WORKDIR /app
 RUN npm install --global pnpm@11.19.0
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
@@ -14,7 +14,7 @@ COPY config ./config
 RUN pnpm test && pnpm build
 RUN pnpm prune --prod
 
-FROM node:24.21.0-bookworm-slim@sha256:0e0ff40c39bc087845bfb27465a0df4ea419520094bc35842ff83dd8cbe6f9b6
+FROM node:26.10.0-bookworm-slim@sha256:662933cf47f013bc8e4beb31a6116448427a82057ba7c42c97e4c5ba766504c2
 # Dependencies are installed in the build stage; the runtime needs only Node.
 RUN rm -rf /usr/local/lib/node_modules/npm /opt/yarn-* \
     && rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/yarn /usr/local/bin/yarnpkg
