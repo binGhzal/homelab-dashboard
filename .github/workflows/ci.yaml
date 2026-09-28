@@ -1,0 +1,87 @@
+name: Validate and publish
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: dashboard-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - name: Install checksum-pinned validation tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          tool_dir=$(mktemp -d)
+          curl -fsSL --retry 3 --max-time 120 https://get.helm.sh/helm-v3.19.0-linux-amd64.tar.gz -o "$tool_dir/helm.tgz"
+          printf '%s  %s\n' a7f81ce08007091b86d8bd696eb4d86b8d0f2e1b9f6c714be62f82f96a594496 "$tool_dir/helm.tgz" | sha256sum -c -
+          tar -xzf "$tool_dir/helm.tgz" -C "$tool_dir" linux-amd64/helm
+          curl -fsSL --retry 3 --max-time 120 https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz -o "$tool_dir/gitleaks.tgz"
+          printf '%s  %s\n' 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb "$tool_dir/gitleaks.tgz" | sha256sum -c -
+          tar -xzf "$tool_dir/gitleaks.tgz" -C "$tool_dir" gitleaks
+          "$tool_dir/gitleaks" dir --redact --no-banner .
+          "$tool_dir/linux-amd64/helm" lint chart --set image.tag=ci
+          "$tool_dir/linux-amd64/helm" template dashboard chart --set image.tag=ci >/dev/null
+          git diff --check
+      - name: Test, type-check and build the production image
+        run: docker build --pull --tag homelab-dashboard:ci .
+      - name: Scan the production image
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
+        with:
+          image-ref: homelab-dashboard:ci
+          format: table
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: CRITICAL,HIGH
+          version: v0.74.0
+  publish:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: image
+        shell: bash
+        run: printf 'name=ghcr.io/%s\n' "${GITHUB_REPOSITORY,,}" >> "$GITHUB_OUTPUT"
+      - id: build
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.image.outputs.name }}:sha-${{ github.sha }}
+          provenance: mode=max
+          sbom: true
+          labels: |
+            org.opencontainers.image.revision=${{ github.sha }}
+      - uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
+        with:
+          subject-name: ${{ steps.image.outputs.name }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+      - name: Record immutable deployment reference
+        env:
+          IMAGE_NAME: ${{ steps.image.outputs.name }}
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+        run: printf 'Tested image (linux/amd64): `%s@%s`\n' "$IMAGE_NAME" "$IMAGE_DIGEST" >> "$GITHUB_STEP_SUMMARY"

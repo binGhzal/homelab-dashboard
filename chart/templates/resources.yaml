@@ -1,0 +1,105 @@
+{{- $image := "" -}}
+{{- if .Values.image.digest -}}
+{{- $image = printf "%s@%s" .Values.image.repository .Values.image.digest -}}
+{{- else -}}
+{{- $image = printf "%s:%s" .Values.image.repository (required "Set image.digest or an immutable image.tag" .Values.image.tag) -}}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+  labels: {app.kubernetes.io/name: homelab-dashboard, app.kubernetes.io/instance: {{ .Release.Name }}}
+spec:
+  replicas: 1
+  strategy: {type: Recreate}
+  selector:
+    matchLabels: {app.kubernetes.io/name: homelab-dashboard, app.kubernetes.io/instance: {{ .Release.Name }}}
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: homelab-dashboard, app.kubernetes.io/instance: {{ .Release.Name }}}
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile: {type: RuntimeDefault}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{ toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: dashboard
+          image: {{ $image | quote }}
+          imagePullPolicy: IfNotPresent
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: [ALL]}
+          ports: [{name: http, containerPort: 3000}]
+          env:
+            - {name: DASHBOARD_CONFIG, value: /config/catalog.yaml}
+            - {name: DASHBOARD_DATA_DIR, value: /data}
+            - {name: PUBLIC_ORIGIN, value: {{ required "publicOrigin is required" .Values.publicOrigin | quote }}}
+            - {name: OIDC_ISSUER, value: {{ required "oidcIssuer is required" .Values.oidcIssuer | quote }}}
+            - {name: OIDC_CLIENT_ID, value: {{ .Values.oidcClientId | quote }}}
+          envFrom:
+            - secretRef: {name: {{ required "existingSecret is required" .Values.existingSecret }}}
+          readinessProbe: {httpGet: {path: /healthz, port: http}, initialDelaySeconds: 3, periodSeconds: 10}
+          livenessProbe: {httpGet: {path: /healthz, port: http}, initialDelaySeconds: 15, periodSeconds: 30}
+          resources: {{ toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - {name: catalog, mountPath: /config, readOnly: true}
+            - {name: data, mountPath: /data}
+            - {name: tmp, mountPath: /tmp}
+      volumes:
+        - name: catalog
+          configMap: {name: {{ required "existingConfigMap is required" .Values.existingConfigMap }}}
+        - name: tmp
+          emptyDir: {sizeLimit: 16Mi}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ .Values.persistence.existingClaim | default (printf "%s-data" .Release.Name) }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}
+spec:
+  type: ClusterIP
+  selector: {app.kubernetes.io/name: homelab-dashboard, app.kubernetes.io/instance: {{ .Release.Name }}}
+  ports: [{name: http, port: 3000, targetPort: http}]
+{{- if not .Values.persistence.existingClaim }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Release.Name }}-data
+  annotations:
+    helm.sh/resource-policy: keep
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- if .Values.persistence.storageClassName }}
+  storageClassName: {{ .Values.persistence.storageClassName | quote }}
+  {{- end }}
+  resources:
+    requests: {storage: {{ .Values.persistence.size | quote }}}
+{{- end }}
+{{- if .Values.httpRoute.enabled }}
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ .Release.Name }}
+spec:
+  parentRefs: {{ toYaml (required "httpRoute.parentRefs is required" .Values.httpRoute.parentRefs) | nindent 4 }}
+  hostnames: [{{ .Values.httpRoute.hostname | quote }}]
+  rules:
+    - backendRefs: [{name: {{ .Release.Name }}, port: 3000}]
+{{- end }}

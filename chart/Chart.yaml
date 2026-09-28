@@ -1,0 +1,9 @@
+apiVersion: v2
+name: homelab-dashboard
+description: Personal app desktop with OpenID Connect and server-enforced access groups
+type: application
+version: 0.1.0
+appVersion: 0.1.0
+home: https://github.com/binGhzal/homelab-dashboard
+sources:
+  - https://github.com/binGhzal/homelab-dashboard

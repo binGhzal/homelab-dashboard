@@ -1,0 +1,42 @@
+version: 1
+title: Home
+wallpaper: /wallpapers/landscape.webp
+adminGroups: [dashboard-admins]
+access:
+  allowAdmin: true
+  anyOf:
+    - allOf: [dashboard-users]
+apps:
+  - id: jellyfin
+    name: Jellyfin
+    description: Your movies, series and music
+    href: https://jellyfin.example.com
+    icon: play
+    iconPath: /icons/jellyfin.svg
+    color: "#181526"
+    category: Media
+    access:
+      allowAdmin: true
+      anyOf:
+        - allOf: [dashboard-users, app-jellyfin]
+  - id: seerr
+    name: Seerr
+    description: Discover and request something to watch
+    href: https://seerr.example.com
+    icon: tickets
+    color: "#287bea"
+    category: Media
+    access:
+      allowAdmin: true
+      anyOf:
+        - allOf: [dashboard-users, app-seerr]
+  - id: grafana
+    name: Grafana
+    description: System metrics and dashboards
+    href: https://grafana.example.com
+    icon: chart
+    iconPath: /icons/grafana.svg
+    color: "#17202d"
+    category: Administration
+    access:
+      allowAdmin: true

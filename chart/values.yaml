@@ -1,0 +1,28 @@
+image:
+  repository: ghcr.io/binghzal/homelab-dashboard
+  # Set digest to the tested published build. Mutable latest is not used.
+  digest: ""
+  tag: ""
+imagePullSecrets: []
+# In-memory OIDC sessions deliberately have one owner. A rollout signs users in again.
+publicOrigin: https://dashboard.example.com
+oidcIssuer: https://auth.example.com/application/o/dashboard/
+oidcClientId: homelab-dashboard
+# Secret contains only OIDC_CLIENT_SECRET and SESSION_SECRET.
+existingSecret: dashboard-credentials
+# ConfigMap contains catalog.yaml; see config/catalog.example.yaml.
+existingConfigMap: dashboard-catalog
+persistence:
+  # Retained single-writer preference database, not application credentials.
+  existingClaim: ""
+  storageClassName: ""
+  size: 1Gi
+nodeSelector: {}
+tolerations: []
+resources:
+  requests: {cpu: 50m, memory: 96Mi}
+  limits: {cpu: "1", memory: 384Mi}
+httpRoute:
+  enabled: false
+  hostname: dashboard.example.com
+  parentRefs: []
