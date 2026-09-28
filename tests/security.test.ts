@@ -226,6 +226,33 @@ describe("server-side identity and entitlements", () => {
   });
 });
 describe("login, cookies and CSRF", () => {
+  it("preserves rate-limit and malformed-body status without leaking errors; health probes remain available", async () => {
+    const { app } = await fixture();
+    for (let i = 0; i < 20; i++)
+      expect(
+        (await app.inject({ url: "/auth/login", headers: host })).statusCode,
+      ).toBe(302);
+    const limited = await app.inject({ url: "/auth/login", headers: host });
+    expect(limited.statusCode).toBe(429);
+    expect(limited.json()).toEqual({ error: "Request could not be completed" });
+    const malformed = await app.inject({
+      method: "PUT",
+      url: "/api/preferences",
+      headers: { ...host, "content-type": "application/json" },
+      payload: "{private-malformed-content",
+    });
+    expect(malformed.statusCode).toBe(400);
+    expect(malformed.body).not.toContain("private-malformed-content");
+    for (let i = 0; i < 305; i++)
+      await app.inject({ url: "/api/user", headers: host });
+    expect(
+      (await app.inject({ url: "/api/user", headers: host })).statusCode,
+    ).toBe(429);
+    for (let i = 0; i < 305; i++)
+      expect(
+        (await app.inject({ url: "/healthz", headers: host })).statusCode,
+      ).toBe(200);
+  });
   it("rejects mismatched state before exchange", async () => {
     const f = await fixture();
     const response = await f.app.inject({ url: "/auth/login", headers: host });

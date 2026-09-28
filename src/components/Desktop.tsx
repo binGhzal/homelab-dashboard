@@ -111,13 +111,55 @@ export function Desktop({
       });
       return;
     }
+    const containingFolder = preferences.folders.find((folder) =>
+      folder.appIds.includes(target),
+    );
+    if (containingFolder) {
+      if (!byId.has(id)) return;
+      const folders = preferences.folders.map((folder) => {
+        const appIds = folder.appIds.filter((app) => app !== id);
+        if (folder.id === containingFolder.id)
+          appIds.splice(appIds.indexOf(target), 0, id);
+        return { ...folder, appIds };
+      });
+      change({
+        ...preferences,
+        folders,
+        order: preferences.order.filter((item) => item !== id),
+      });
+      return;
+    }
     const order = preferences.order.filter((item) => item !== id);
     const index = order.indexOf(target);
     if (index < 0) return;
     order.splice(index, 0, id);
-    change({ ...preferences, order });
+    change({
+      ...preferences,
+      folders: preferences.folders.map((folder) => ({
+        ...folder,
+        appIds: folder.appIds.filter((app) => app !== id),
+      })),
+      order,
+    });
   }
   function nudge(id: string, direction: number) {
+    const containingFolder = preferences.folders.find((folder) =>
+      folder.appIds.includes(id),
+    );
+    if (containingFolder) {
+      const appIds = [...containingFolder.appIds];
+      const from = appIds.indexOf(id);
+      const to = from + direction;
+      if (to < 0 || to >= appIds.length) return;
+      [appIds[from], appIds[to]] = [appIds[to], appIds[from]];
+      change({
+        ...preferences,
+        folders: preferences.folders.map((folder) =>
+          folder.id === containingFolder.id ? { ...folder, appIds } : folder,
+        ),
+      });
+      return;
+    }
     const order = [...preferences.order];
     const from = order.indexOf(id);
     const to = from + direction;
@@ -252,19 +294,16 @@ export function Desktop({
                 ? "Remove from dock"
                 : "Add to dock"}
             </button>
-            {insideFolder ? (
+            <button role="menuitem" onClick={() => nudge(app.id, -1)}>
+              Move earlier
+            </button>
+            <button role="menuitem" onClick={() => nudge(app.id, 1)}>
+              Move later
+            </button>
+            {insideFolder && (
               <button role="menuitem" onClick={() => removeFromFolder(app.id)}>
                 Move to home
               </button>
-            ) : (
-              <>
-                <button role="menuitem" onClick={() => nudge(app.id, -1)}>
-                  Move earlier
-                </button>
-                <button role="menuitem" onClick={() => nudge(app.id, 1)}>
-                  Move later
-                </button>
-              </>
             )}
             {preferences.folders
               .filter((folder) => !folder.appIds.includes(app.id))

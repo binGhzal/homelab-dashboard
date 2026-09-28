@@ -10,8 +10,12 @@ oidcIssuer: https://auth.example.com/application/o/dashboard/
 oidcClientId: homelab-dashboard
 # Secret contains only OIDC_CLIENT_SECRET and SESSION_SECRET.
 existingSecret: dashboard-credentials
-# ConfigMap contains catalog.yaml; see config/catalog.example.yaml.
-existingConfigMap: dashboard-catalog
+# Set only one: catalog for an automatically rolled configuration, or an external
+# ConfigMap containing catalog.yaml. External ConfigMap changes require a restart.
+existingConfigMap: ""
+catalog: {}
+podLabels: {}
+extraEnv: []
 persistence:
   # Retained single-writer preference database, not application credentials.
   existingClaim: ""

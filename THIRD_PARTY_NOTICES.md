@@ -51,5 +51,6 @@ accept paid-service API keys.
 
 Exact direct and transitive versions are recorded in `pnpm-lock.yaml`. Server
 packages retain their own license files in the production dependency tree.
-OpenTelemetry packages use Apache-2.0; Fastify, openid-client, YAML and Zod use
-MIT. Build-time tools have their own notices and are not application assets.
+OpenTelemetry packages use Apache-2.0; Fastify, openid-client and Zod use MIT;
+YAML uses ISC. Build-time tools have their own notices and are not application
+assets.

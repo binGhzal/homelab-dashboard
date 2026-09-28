@@ -12,6 +12,7 @@ interface WeatherData {
   temperature: number;
   code: number;
 }
+const refreshInterval = 15 * 60 * 1000;
 function description(code: number): string {
   if (code === 0) return "Clear skies";
   if (code <= 3) return "Partly cloudy";
@@ -47,21 +48,52 @@ export function Weather({ demo }: { demo: boolean }) {
   const [error, setError] = useState("");
   const controller = useRef<AbortController | null>(null);
   const generation = useRef(0);
-  useEffect(
-    () => () => {
-      generation.current++;
-      controller.current?.abort();
-    },
-    [],
-  );
-  async function enable() {
+  const enabled = useRef(false);
+  const lastAttemptAt = useRef(0);
+  const refreshTimer = useRef<number | null>(null);
+  function cancelPending() {
+    generation.current++;
+    controller.current?.abort();
+    if (refreshTimer.current !== null)
+      window.clearTimeout(refreshTimer.current);
+    refreshTimer.current = null;
+  }
+  function scheduleRefresh() {
+    if (refreshTimer.current !== null)
+      window.clearTimeout(refreshTimer.current);
+    refreshTimer.current = null;
+    if (!enabled.current || document.hidden) return;
+    refreshTimer.current = window.setTimeout(
+      refresh,
+      Math.max(0, refreshInterval - (Date.now() - lastAttemptAt.current)),
+    );
+  }
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.hidden) {
+        cancelPending();
+        setState((current) => (current === "loading" ? "off" : current));
+      } else scheduleRefresh();
+    };
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      enabled.current = false;
+      cancelPending();
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, []);
+  function refresh() {
+    if (!enabled.current || document.hidden) return;
     const attempt = ++generation.current;
+    lastAttemptAt.current = Date.now();
+    controller.current?.abort();
     if (!navigator.geolocation) {
       setError("Location is unavailable in this browser.");
       setState("error");
+      scheduleRefresh();
       return;
     }
-    setState("loading");
+    setState((current) => (current === "ready" ? "ready" : "loading"));
     setError("");
     navigator.geolocation.getCurrentPosition(
       async (position) => {
@@ -106,6 +138,7 @@ export function Weather({ demo }: { demo: boolean }) {
           }
         } finally {
           window.clearTimeout(timeout);
+          if (generation.current === attempt) scheduleRefresh();
         }
       },
       (geolocationError) => {
@@ -116,13 +149,18 @@ export function Weather({ demo }: { demo: boolean }) {
             ? "Location was not shared. Your dashboard still works."
             : "Could not find your location. Try again.",
         );
+        scheduleRefresh();
       },
       { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 },
     );
   }
+  function enable() {
+    enabled.current = true;
+    refresh();
+  }
   function disable() {
-    generation.current++;
-    controller.current?.abort();
+    enabled.current = false;
+    cancelPending();
     setData(null);
     setState("off");
   }

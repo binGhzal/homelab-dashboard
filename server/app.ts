@@ -129,9 +129,19 @@ export async function createApp(options: Options) {
     if (request.url.startsWith("/api/") || request.url.startsWith("/auth/"))
       reply.header("Cache-Control", "no-store");
   });
-  app.setErrorHandler((_error, _request, reply) => {
+  app.setErrorHandler((error, _request, reply) => {
     // Callback URLs and upstream response bodies may contain secrets; never log them.
-    reply.code(500).send({ error: "Request could not be completed" });
+    const status =
+      error !== null &&
+      typeof error === "object" &&
+      "statusCode" in error &&
+      typeof error.statusCode === "number" &&
+      Number.isInteger(error.statusCode) &&
+      error.statusCode >= 400 &&
+      error.statusCode < 500
+        ? error.statusCode
+        : 500;
+    reply.code(status).send({ error: "Request could not be completed" });
   });
   function cookieId(request: FastifyRequest, name: string): string | undefined {
     const raw = request.cookies[name];
@@ -188,7 +198,9 @@ export async function createApp(options: Options) {
       return;
     }
   }
-  app.get("/healthz", async () => ({ status: "ok" }));
+  app.get("/healthz", { config: { rateLimit: false } }, async () => ({
+    status: "ok",
+  }));
   app.get(
     "/auth/login",
     { config: { rateLimit: { max: 20, timeWindow: "1 minute" } } },

@@ -487,12 +487,24 @@ button:active,
 .folder-dialog {
   width: 630px;
   overflow: visible;
+  /* Fixed menus must escape the folder's scrolling app grid. */
+  backdrop-filter: none;
 }
 .folder-app-grid {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 25px 20px;
   padding: 8px 0 14px;
   max-height: 60dvh;
+  overflow: auto;
+}
+.folder-app-grid .context-menu {
+  position: fixed;
+  left: 50% !important;
+  right: auto !important;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  width: 240px;
+  max-height: calc(100dvh - 64px);
   overflow: auto;
 }
 .search-dialog {
@@ -1059,18 +1071,9 @@ button:active,
   .folder-app-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 24px 14px;
-    overflow: visible;
   }
   .folder-dialog {
     overflow: auto;
-  }
-  .folder-app-grid .context-menu {
-    position: fixed;
-    left: 50% !important;
-    right: auto !important;
-    top: 50%;
-    transform: translate(-50%, -50%);
-    width: 240px;
   }
   .search-dialog {
     padding: 0;

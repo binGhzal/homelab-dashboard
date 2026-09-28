@@ -24,15 +24,25 @@ jobs:
           curl -fsSL --retry 3 --max-time 120 https://get.helm.sh/helm-v3.19.0-linux-amd64.tar.gz -o "$tool_dir/helm.tgz"
           printf '%s  %s\n' a7f81ce08007091b86d8bd696eb4d86b8d0f2e1b9f6c714be62f82f96a594496 "$tool_dir/helm.tgz" | sha256sum -c -
           tar -xzf "$tool_dir/helm.tgz" -C "$tool_dir" linux-amd64/helm
+          printf 'HELM_BIN=%s\n' "$tool_dir/linux-amd64/helm" >> "$GITHUB_ENV"
           curl -fsSL --retry 3 --max-time 120 https://github.com/gitleaks/gitleaks/releases/download/v8.30.1/gitleaks_8.30.1_linux_x64.tar.gz -o "$tool_dir/gitleaks.tgz"
           printf '%s  %s\n' 551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb "$tool_dir/gitleaks.tgz" | sha256sum -c -
           tar -xzf "$tool_dir/gitleaks.tgz" -C "$tool_dir" gitleaks
           "$tool_dir/gitleaks" dir --redact --no-banner .
-          "$tool_dir/linux-amd64/helm" lint chart --set image.tag=ci
-          "$tool_dir/linux-amd64/helm" template dashboard chart --set image.tag=ci >/dev/null
+          "$tool_dir/linux-amd64/helm" lint chart --set image.tag=ci --set existingConfigMap=dashboard-catalog
+          "$tool_dir/linux-amd64/helm" template dashboard chart --set image.tag=ci --set existingConfigMap=dashboard-catalog >/dev/null
           git diff --check
       - name: Test, type-check and build the production image
         run: docker build --pull --tag homelab-dashboard:ci .
+      - name: Check chart deployment structure and configuration variants
+        run: |
+          docker run --rm --network none --read-only --cap-drop ALL \
+            --tmpfs /tmp:rw,noexec,nosuid,size=16m \
+            --volume "$HELM_BIN:/usr/local/bin/helm:ro" \
+            --volume "$PWD/chart:/app/chart:ro" \
+            --volume "$PWD/config:/app/config:ro" \
+            --volume "$PWD/scripts:/app/scripts:ro" \
+            homelab-dashboard:ci node scripts/validate-chart.mjs
       - name: Scan the production image
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # 0.35.0
         with:
@@ -75,7 +85,7 @@ jobs:
           sbom: true
           labels: |
             org.opencontainers.image.revision=${{ github.sha }}
-      - uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
+      - uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
         with:
           subject-name: ${{ steps.image.outputs.name }}
           subject-digest: ${{ steps.build.outputs.digest }}
@@ -84,4 +94,5 @@ jobs:
         env:
           IMAGE_NAME: ${{ steps.image.outputs.name }}
           IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
-        run: printf 'Tested image (linux/amd64): `%s@%s`\n' "$IMAGE_NAME" "$IMAGE_DIGEST" >> "$GITHUB_STEP_SUMMARY"
+        run: |
+          printf 'Tested image (linux/amd64): `%s@%s`\n' "$IMAGE_NAME" "$IMAGE_DIGEST" >> "$GITHUB_STEP_SUMMARY"

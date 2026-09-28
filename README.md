@@ -69,7 +69,9 @@ OIDC discovery; invalid or unreachable identity configuration fails startup.
 
 Catalog configuration belongs in Git; credentials do not. The YAML is strict and
 rejects unknown fields, duplicate application IDs, non-HTTPS application links,
-and remote or traversal icon paths. Restart the process after changing a mounted
+and remote or traversal icon paths. The Helm chart's inline `catalog` value
+creates the ConfigMap and rolls the Deployment when it changes. When using
+`existingConfigMap` instead, restart the process after changing that mounted
 catalog. The browser receives only the authorized projection, never the complete
 catalog or access rules.
 
@@ -167,10 +169,16 @@ cross-browser persistence. They make no requests to real media applications.
 A local Chromium executable can be selected with
 `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`; otherwise Playwright's installed browser is
 used. `test-results/` holds generated synthetic screenshots and is not committed.
-CI builds and tests the production image, checks the Helm package, scans for
-secrets and known high/critical image vulnerabilities, and publishes an attested
-immutable image reference. Live OIDC login and deployment-specific authorization
-still require acceptance against your own identity provider and gateway.
+
+With Helm available, run `node scripts/validate-chart.mjs` to check deployment
+structure, inline and external catalogs, persistent storage, and routing options.
+Set `HELM_BIN` if Helm is outside your executable path.
+
+CI builds and tests the production image, checks the Helm package and deployment
+variants, scans for secrets and known high/critical image vulnerabilities, and
+publishes an attested immutable image reference. Live OIDC login and
+deployment-specific authorization still require acceptance against your own
+identity provider and gateway.
 
 ## License
 
