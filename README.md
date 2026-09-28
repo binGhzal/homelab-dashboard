@@ -65,6 +65,20 @@ The application supports a read-only root filesystem and an unprivileged UID.
 or downstream application availability check. Startup validates configuration and
 OIDC discovery; invalid or unreachable identity configuration fails startup.
 
+The chart is also published to `oci://ghcr.io/binghzal/charts/homelab-dashboard`.
+Release CI records its verified OCI manifest digest. Pin that digest in GitOps,
+and configure `image.digest` separately to select the tested application image.
+For example, download chart version 0.1.0 with:
+
+```sh
+helm pull oci://ghcr.io/binghzal/charts/homelab-dashboard --version 0.1.0
+```
+
+Published chart versions are never replaced by CI. A repeated release reuses the
+existing digest only when every packaged chart file matches; changed chart
+contents require a new `Chart.yaml` version. Publication verifies anonymous pulls
+by both version and digest. Chart-only changes do not publish another app image.
+
 ## Catalog and authorization
 
 Catalog configuration belongs in Git; credentials do not. The YAML is strict and
