@@ -26,6 +26,16 @@ are included.
   separately distributed artwork. The original SVG/PNG files accompany the
   application, and the container includes these notices and license texts.
   No Simple Icons brand artwork remains in the distribution.
+- **Remote icon collection: [selfh.st/icons](https://selfh.st/icons/)**, maintained
+  by selfh.st and contributors and offered under
+  [CC BY 4.0](https://github.com/selfhst/icons/blob/main/LICENSE).
+  The default icon integration requests the collection's index and available
+  original-color images through jsDelivr. These remote files are not bundled or
+  recolored by this project; the local fallback artwork above is distributed
+  separately. Collection credit does not replace each original owner's copyright
+  or trademark conditions. Set an application's `iconSource` to `local` to use
+  only local artwork. Integration details and rights limitations are recorded in
+  [docs/licenses/brand-assets.md](docs/licenses/brand-assets.md#remote-selfhst-icon-collection).
 - **Landscape wallpaper**: generated specifically for this project with OpenAI's
   image generation service in September 2026; no Umbrel image was used as an
   input. The resulting image was encoded as WebP. The project includes the image

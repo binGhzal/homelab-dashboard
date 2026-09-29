@@ -4,7 +4,7 @@ export interface BrandIcon {
 }
 
 // Unmodified upstream artwork. Provenance and licenses: docs/licenses/brand-assets.md.
-// Restricted marks deliberately have no bundled artwork, including legacy paths.
+// Unavailable marks have no bundled copy; remote collection lookup is independent.
 export const brandIcons: Readonly<Record<string, BrandIcon>> = {
   jellyfin: { src: "/icons/jellyfin.svg" },
   immich: { src: "/icons/immich.svg" },

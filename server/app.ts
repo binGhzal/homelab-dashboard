@@ -5,6 +5,7 @@ import rateLimit from "@fastify/rate-limit";
 import staticFiles from "@fastify/static";
 import { resolve } from "node:path";
 import { existsSync, readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import type { Catalog, Runtime } from "./config.js";
 import {
   authorizedApps,
@@ -32,6 +33,7 @@ import { z } from "zod";
 import type { User } from "../shared/types.js";
 import { requestSpan, endRequestSpan } from "./telemetry.js";
 import type { Span } from "@opentelemetry/api";
+import type { DiscoveryProvider, DiscoverySnapshot } from "./discovery.js";
 
 interface Options {
   catalog: Catalog;
@@ -41,6 +43,7 @@ interface Options {
   preferences?: PreferencesStore;
   staticRoot?: string | false;
   clock?: () => number;
+  discovery?: DiscoveryProvider;
 }
 export async function createApp(options: Options) {
   const { catalog, runtime, provider } = options;
@@ -57,6 +60,50 @@ export async function createApp(options: Options) {
     requestTimeout: 15000,
   });
   const spans = new WeakMap<FastifyRequest, Span>();
+  const discovered = new WeakMap<FastifyRequest, DiscoverySnapshot>();
+  function discoverySnapshot(request: FastifyRequest) {
+    if (!options.discovery) return;
+    let snapshot = discovered.get(request);
+    if (!snapshot) {
+      snapshot = options.discovery.snapshot();
+      const configured = new Set(catalog.apps.map((entry) => entry.id));
+      if (
+        catalog.apps.length +
+          snapshot.apps.filter((entry) => !configured.has(entry.id)).length >
+        100
+      )
+        snapshot = {
+          ...snapshot,
+          state: "unavailable",
+          apps: [],
+          rejectedRoutes: snapshot.rejectedRoutes + snapshot.apps.length,
+        };
+      discovered.set(request, snapshot);
+    }
+    return snapshot;
+  }
+  function currentCatalog(request: FastifyRequest): Catalog {
+    const snapshot = discoverySnapshot(request);
+    if (!snapshot || snapshot.state !== "ready") return catalog;
+    // A discovered route may never replace an explicitly configured app or its policy.
+    const configured = new Set(catalog.apps.map((entry) => entry.id));
+    return {
+      ...catalog,
+      apps: [
+        ...catalog.apps,
+        ...snapshot.apps.filter((entry) => !configured.has(entry.id)),
+      ],
+    };
+  }
+  function catalogRevision(request: FastifyRequest, appIds: string[]) {
+    const snapshot = discoverySnapshot(request);
+    if (!snapshot) return {};
+    return {
+      catalogRevision: createHash("sha256")
+        .update(JSON.stringify([snapshot.state, [...appIds].sort()]))
+        .digest("hex"),
+    };
+  }
   app.addHook("onRequest", async (request) => {
     if (request.routeOptions.url !== "/healthz")
       spans.set(
@@ -90,8 +137,16 @@ export async function createApp(options: Options) {
         defaultSrc: ["'self'"],
         scriptSrc: ["'self'"],
         styleSrc: ["'self'", "'unsafe-inline'"],
-        imgSrc: ["'self'", "data:"],
-        connectSrc: ["'self'", "https://api.open-meteo.com"],
+        imgSrc: [
+          "'self'",
+          "data:",
+          "https://cdn.jsdelivr.net/gh/selfhst/icons@main/",
+        ],
+        connectSrc: [
+          "'self'",
+          "https://api.open-meteo.com",
+          "https://cdn.jsdelivr.net/gh/selfhst/icons@main/",
+        ],
         objectSrc: ["'none'"],
         baseUri: ["'none'"],
         frameAncestors: ["'none'"],
@@ -114,6 +169,7 @@ export async function createApp(options: Options) {
   gc.unref();
   app.addHook("onClose", async () => {
     clearInterval(gc);
+    options.discovery?.stop();
     preferences.close();
   });
   app.addHook("onRequest", async (request, reply) => {
@@ -296,6 +352,27 @@ export async function createApp(options: Options) {
       weatherEnabled: catalog.weatherEnabled,
     };
   });
+  app.get("/api/discovery", async (request, reply) => {
+    const auth = await authenticated(request, reply);
+    if (!auth) return;
+    if (!isAdmin(auth.identity, catalog))
+      return reply.code(403).send({ error: "Administrator access required" });
+    const snapshot = discoverySnapshot(request);
+    if (!snapshot) return { state: "disabled" };
+    const configured = new Set(catalog.apps.map((entry) => entry.id));
+    return {
+      state: snapshot.state,
+      lastSuccessfulSync: snapshot.lastSuccessfulSync,
+      rejectedRoutes: snapshot.rejectedRoutes,
+      namespaces: snapshot.namespaces,
+      refreshIntervalSeconds: snapshot.refreshIntervalSeconds,
+      discoveredApps: snapshot.apps.filter((entry) => !configured.has(entry.id))
+        .length,
+      configuredOverrides: snapshot.apps.filter((entry) =>
+        configured.has(entry.id),
+      ).length,
+    };
+  });
   for (const path of ["/api/apps", "/api/search"])
     app.get(path, async (request, reply) => {
       const auth = await authenticated(request, reply);
@@ -307,20 +384,24 @@ export async function createApp(options: Options) {
       if (query.length > 120)
         return reply.code(400).send({ error: "Search is too long" });
       return {
-        apps: authorizedApps(auth.identity, catalog).filter((a) =>
-          `${a.name} ${a.description} ${a.category}`
-            .toLocaleLowerCase()
-            .includes(query.toLocaleLowerCase()),
+        apps: authorizedApps(auth.identity, currentCatalog(request)).filter(
+          (a) =>
+            `${a.name} ${a.description} ${a.category}`
+              .toLocaleLowerCase()
+              .includes(query.toLocaleLowerCase()),
         ),
       };
     });
   app.get("/api/preferences", async (request, reply) => {
     const auth = await authenticated(request, reply);
     if (!auth) return;
-    return preferences.get(
-      ownerKey(runtime.issuer, auth.identity.sub),
-      authorizedApps(auth.identity, catalog).map((a) => a.id),
+    const appIds = authorizedApps(auth.identity, currentCatalog(request)).map(
+      (a) => a.id,
     );
+    return {
+      ...preferences.get(ownerKey(runtime.issuer, auth.identity.sub), appIds),
+      ...catalogRevision(request, appIds),
+    };
   });
   app.put("/api/preferences", async (request, reply) => {
     const auth = await authenticated(request, reply);
@@ -336,18 +417,42 @@ export async function createApp(options: Options) {
     const body = z
       .object({
         revision: z.number().int().nonnegative(),
+        catalogRevision: z
+          .string()
+          .regex(/^[a-f0-9]{64}$/)
+          .optional(),
         preferences: preferencesSchema,
       })
       .strict()
       .safeParse(request.body);
     if (!body.success) return reply.code(400).send({ error: "Invalid layout" });
+    const snapshot = discoverySnapshot(request);
+    if (snapshot && snapshot.state !== "ready")
+      return reply.code(503).send({
+        error:
+          "App discovery is temporarily unavailable. Your saved layout is unchanged; try again shortly.",
+      });
+    const appIds = authorizedApps(auth.identity, currentCatalog(request)).map(
+      (a) => a.id,
+    );
+    const currentRevision = catalogRevision(request, appIds);
+    if (
+      currentRevision.catalogRevision &&
+      !matches(body.data.catalogRevision, currentRevision.catalogRevision)
+    )
+      return reply.code(409).send({
+        error: "Available apps changed. Refresh your layout and try again.",
+      });
     try {
-      return preferences.put(
-        ownerKey(runtime.issuer, auth.identity.sub),
-        body.data.preferences,
-        body.data.revision,
-        authorizedApps(auth.identity, catalog).map((a) => a.id),
-      );
+      return {
+        ...preferences.put(
+          ownerKey(runtime.issuer, auth.identity.sub),
+          body.data.preferences,
+          body.data.revision,
+          appIds,
+        ),
+        ...currentRevision,
+      };
     } catch (error) {
       if (error instanceof PreferencesConflict)
         return reply.code(409).send({

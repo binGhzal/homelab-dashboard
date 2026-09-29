@@ -1,7 +1,13 @@
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { test, expect, type Locator, type Page } from "@playwright/test";
+import {
+  test,
+  expect,
+  type BrowserContext,
+  type Locator,
+  type Page,
+} from "@playwright/test";
 
 const evidenceDirectory = resolve(
   process.env.DASHBOARD_QA_DIR ?? "/tmp/dashboard-ui-revision",
@@ -17,11 +23,59 @@ const appNames = [
   "Gitea",
   "FreshRSS",
 ];
+const iconCdn = "https://cdn.jsdelivr.net/gh/selfhst/icons@main/";
+const appIds = [
+  "jellyfin",
+  "immich",
+  "seerr",
+  "paperless-ngx",
+  "audiobookshelf",
+  "vaultwarden",
+  "syncthing",
+  "gitea",
+  "freshrss",
+];
+async function mockIconCatalog(context: BrowserContext) {
+  await context.route(`${iconCdn}**`, async (route) => {
+    const relative = route.request().url().slice(iconCdn.length);
+    const headers = { "Access-Control-Allow-Origin": "*" };
+    if (relative === "index.json") {
+      await route.fulfill({
+        headers,
+        json: appIds.map((id, index) => ({
+          Name: appNames[index],
+          Reference: id,
+          SVG: id === "seerr" ? "No" : "Yes",
+          WebP: "No",
+          PNG: "Yes",
+        })),
+      });
+      return;
+    }
+    const id = appIds.find(
+      (id) =>
+        relative ===
+        `${id === "seerr" ? "png" : "svg"}/${id}.${id === "seerr" ? "png" : "svg"}`,
+    );
+    if (!id) {
+      await route.abort("blockedbyclient");
+      return;
+    }
+    await route.fulfill({
+      headers,
+      path: resolve(
+        import.meta.dirname,
+        `../../public/icons/${id}.${id === "seerr" ? "png" : "svg"}`,
+      ),
+    });
+  });
+}
 
 test.beforeAll(async () => {
   await mkdir(evidenceDirectory, { recursive: true });
 });
-test.beforeEach(async ({ request }, testInfo) => {
+test.beforeEach(async ({ request, context }, testInfo) => {
+  await mockIconCatalog(context);
   const origin = new URL(testInfo.project.use.baseURL as string).origin;
   expect(new URL(origin).hostname).toBe("127.0.0.1");
   let userResponse = await request.get("/api/user");
@@ -205,6 +259,15 @@ for (const viewport of [
       await expect(
         page.getByRole("dialog", { name: "Settings", exact: true }),
       ).toBeVisible();
+      const iconCredit = page
+        .getByRole("dialog", { name: "Settings", exact: true })
+        .getByRole("link", { name: "selfh.st", exact: true });
+      await expect(iconCredit).toHaveAttribute(
+        "href",
+        "https://selfh.st/icons/",
+      );
+      await expect(iconCredit).toHaveAttribute("rel", "noopener noreferrer");
+      await expect(iconCredit).toBeVisible();
       await page
         .getByRole("button", { name: "Close settings", exact: true })
         .click();
@@ -305,6 +368,7 @@ test("folders create, rename, reorder and dissolve while preserving account layo
     isMobile: true,
     hasTouch: true,
   });
+  await mockIconCatalog(second);
   try {
     const other = await second.newPage();
     await other.goto(new URL("/", page.url()).href);
@@ -408,7 +472,7 @@ test("keyboard desktop ordering, context menus, search and wallpaper controls", 
   await jellyfin.focus();
   await page.keyboard.press("Control+k");
   const search = page.getByRole("textbox", {
-    name: "Search your apps",
+    name: "Search apps and actions",
     exact: true,
   });
   await expect(search).toBeFocused();
@@ -433,7 +497,9 @@ test("keyboard desktop ordering, context menus, search and wallpaper controls", 
   await page.keyboard.press("Meta+k");
   await expect(search).toBeFocused();
   await search.fill("no matching application");
-  await expect(page.getByText("No apps found", { exact: true })).toBeVisible();
+  await expect(
+    page.getByText("No results found", { exact: true }),
+  ).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(search).not.toBeVisible();
   await expect(jellyfin).toBeFocused();
@@ -684,6 +750,7 @@ test("a stale folder draft stays visible and can recover after another browser s
     .fill("Shared shelf");
   await dialog.getByRole("checkbox", { name: "Jellyfin", exact: true }).check();
   const second = await browser.newContext();
+  await mockIconCatalog(second);
   try {
     const other = await second.newPage();
     await other.goto(new URL("/", page.url()).href);
@@ -706,7 +773,7 @@ test("a stale folder draft stays visible and can recover after another browser s
   expect((await conflict).status()).toBe(409);
   const alert = dialog.getByRole("alert");
   await expect(alert).toBeVisible();
-  await expect(alert).toContainText("Your layout changed in another browser");
+  await expect(alert).toContainText("Your layout or available apps changed");
   await expect(
     dialog.getByRole("textbox", { name: "Folder name" }),
   ).toHaveValue("Shared shelf");
@@ -736,6 +803,99 @@ test("a stale folder draft stays visible and can recover after another browser s
   await expect(
     page.getByRole("button", { name: "Open folder Shared shelf", exact: true }),
   ).toBeVisible();
+});
+
+test("discovery save failures retain the draft and retry with the refreshed catalog revision", async ({
+  page,
+  request,
+}) => {
+  const initialToken = "a".repeat(64);
+  const refreshedToken = "b".repeat(64);
+  let catalogRevision = initialToken;
+  const writtenTokens: unknown[] = [];
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  const original = await (await request.get("/api/preferences")).json();
+  await page.route("**/api/preferences", async (route) => {
+    if (route.request().method() === "PUT") {
+      writtenTokens.push(route.request().postDataJSON().catalogRevision);
+      if (writtenTokens.length === 1) {
+        await route.fulfill({
+          status: 503,
+          json: { error: "App discovery is temporarily unavailable." },
+        });
+        return;
+      }
+    }
+    const response = await route.fetch();
+    await route.fulfill({
+      response,
+      json: { ...(await response.json()), catalogRevision },
+    });
+  });
+  await page.goto("/");
+  await accountAction(page, "New folder");
+  const dialog = page.getByRole("dialog", { name: "New folder", exact: true });
+  const name = dialog.getByRole("textbox", { name: "Folder name" });
+  const selection = dialog.getByRole("checkbox", {
+    name: "Jellyfin",
+    exact: true,
+  });
+  await name.fill("Discovery shelf");
+  await selection.check();
+  await dialog
+    .getByRole("button", { name: "Create folder", exact: true })
+    .click();
+  const alert = dialog.getByRole("alert");
+  await expect(alert).toBeVisible();
+  await expect(alert).toContainText("App discovery is temporarily unavailable");
+  await expect(alert).toContainText("Your saved layout is unchanged");
+  await expect(name).toHaveValue("Discovery shelf");
+  await expect(selection).toBeChecked();
+  expect(writtenTokens).toEqual([initialToken]);
+  expect(await (await request.get("/api/preferences")).json()).toEqual(
+    original,
+  );
+  await page.screenshot({
+    path: resolve(evidenceDirectory, "folder-discovery-unavailable.png"),
+    fullPage: false,
+  });
+
+  catalogRevision = refreshedToken;
+  await alert
+    .getByRole("button", { name: "Refresh layout", exact: true })
+    .click();
+  await expect(alert).not.toBeVisible();
+  await expect(name).toHaveValue("Discovery shelf");
+  await expect(selection).toBeChecked();
+  await dialog
+    .getByRole("button", { name: "Create folder", exact: true })
+    .click();
+  await expect(dialog).not.toBeVisible();
+  await expect(
+    page.getByRole("button", {
+      name: "Open folder Discovery shelf",
+      exact: true,
+    }),
+  ).toBeVisible();
+  expect(writtenTokens).toEqual([initialToken, refreshedToken]);
+
+  // A successful PUT response must retain the token for the next edit too.
+  await accountAction(page, "Desktop settings");
+  await page
+    .getByRole("button", { name: "Use dusk wallpaper", exact: true })
+    .click();
+  await expect(page.locator(".desktop-page")).toHaveClass(/wallpaper-dusk/);
+  expect(writtenTokens).toEqual([initialToken, refreshedToken, refreshedToken]);
+  await page.reload();
+  await expect(
+    page.getByRole("button", {
+      name: "Open folder Discovery shelf",
+      exact: true,
+    }),
+  ).toBeVisible();
+  await expect(page.locator(".desktop-page")).toHaveClass(/wallpaper-dusk/);
+  expect(pageErrors).toEqual([]);
 });
 
 test("catalog IDs account and desktop cannot replace the system menus", async ({
@@ -804,6 +964,203 @@ test("catalog IDs account and desktop cannot replace the system menus", async ({
       .getByRole("menuitem", { name: "Remove from dock", exact: true }),
   ).toBeVisible();
   expect(errors).toEqual([]);
+});
+
+test("the command palette groups apps and actions and restores its original focus", async ({
+  page,
+}) => {
+  const errors = collectBrowserErrors(page);
+  await page.goto("/");
+  const launcher = page
+    .locator(".desktop-apps")
+    .getByRole("link", { name: "Open Jellyfin", exact: true });
+  const palette = page.getByRole("dialog", {
+    name: "Search apps and actions",
+    exact: true,
+  });
+  const input = palette.getByRole("textbox", {
+    name: "Search apps and actions",
+    exact: true,
+  });
+  const cases = [
+    { query: "preferences", action: "Desktop settings", dialog: "Settings" },
+    { query: "background", action: "Change wallpaper", dialog: "Settings" },
+    { query: "new folder", action: "New folder", dialog: "New folder" },
+    { query: "pin", action: "Customize dock", dialog: "Customize dock" },
+  ];
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
+    await launcher.focus();
+    await page.keyboard.press("Control+k");
+    await expect(palette.getByRole("heading", { name: /^Apps/ })).toBeVisible();
+    await expect(
+      palette.getByRole("heading", { name: /^Actions/ }),
+    ).toBeVisible();
+    await expect(palette.locator("a[data-search-result]")).toHaveCount(9);
+    await expect(palette.locator(".search-action")).toHaveCount(5);
+    // Arrow navigation crosses the section boundary in rendered result order.
+    for (let index = 0; index < 10; index++)
+      await page.keyboard.press("ArrowDown");
+    await expect(
+      palette.getByRole("button", { name: "Desktop settings", exact: true }),
+    ).toBeFocused();
+    await page.keyboard.press("ArrowUp");
+    await expect(palette.locator("a[data-search-result]").last()).toBeFocused();
+    await input.fill("re");
+    await input.focus();
+    await page.screenshot({
+      path: resolve(evidenceDirectory, `command-palette-${width}.png`),
+      fullPage: false,
+    });
+    await page.keyboard.press("Escape");
+    await expect(launcher).toBeFocused();
+    for (const item of cases) {
+      await page.keyboard.press("Control+k");
+      await input.fill(item.query);
+      await expect(
+        palette.getByRole("button", { name: item.action, exact: true }),
+      ).toBeVisible();
+      await page.keyboard.press("ArrowDown");
+      await expect(
+        palette.getByRole("button", { name: item.action, exact: true }),
+      ).toBeFocused();
+      await page.keyboard.press("Enter");
+      const dialog = page.getByRole("dialog", {
+        name: item.dialog,
+        exact: true,
+      });
+      await expect(dialog).toBeVisible();
+      await expect(palette).not.toBeVisible();
+      await expect(page.locator("dialog[open]")).toHaveCount(1);
+      expect(
+        await dialog.evaluate((element) =>
+          element.contains(document.activeElement),
+        ),
+      ).toBe(true);
+      if (item.action === "Desktop settings") {
+        await page.screenshot({
+          path: resolve(evidenceDirectory, `settings-icons-${width}.png`),
+          fullPage: false,
+        });
+      }
+      await page.keyboard.press("Escape");
+      await expect(dialog).not.toBeVisible();
+      await expect(launcher).toBeFocused();
+    }
+    await page.keyboard.press("Control+k");
+    await input.fill("reorder");
+    // Enter from the input activates the first matching action too.
+    await page.keyboard.press("Enter");
+    await expect(palette).not.toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Done", exact: true }),
+    ).toBeVisible();
+    await expect(launcher).toBeFocused();
+    await page.keyboard.press("Escape");
+    await expect(
+      page.getByRole("button", { name: "Done", exact: true }),
+    ).not.toBeVisible();
+  }
+  expect(errors).toEqual([]);
+});
+
+test("palette keyboard navigation skips actions unavailable without authorized apps", async ({
+  page,
+}) => {
+  await page.route("**/api/apps", (route) =>
+    route.fulfill({ json: { apps: [] } }),
+  );
+  await page.goto("/");
+  await expect(
+    page.getByRole("button", { name: "Your account", exact: true }),
+  ).toBeVisible();
+  await page.keyboard.press("Control+k");
+  const palette = page.getByRole("dialog", {
+    name: "Search apps and actions",
+    exact: true,
+  });
+  await expect(
+    palette.getByRole("button", { name: "New folder", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    palette.getByRole("button", { name: "Rearrange apps", exact: true }),
+  ).toBeDisabled();
+  await page.keyboard.press("ArrowDown");
+  await expect(
+    palette.getByRole("button", { name: "Desktop settings", exact: true }),
+  ).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(
+    palette.getByRole("button", { name: "Customize dock", exact: true }),
+  ).toBeFocused();
+  await palette.getByRole("textbox").fill("Jellyfin");
+  await expect(
+    palette.getByText("No results found", { exact: true }),
+  ).toBeVisible();
+  await expect(palette.locator("a[data-search-result]")).toHaveCount(0);
+});
+
+test("the published icon index resolves remote artwork in the rendered desktop", async ({
+  page,
+}) => {
+  const errors = collectBrowserErrors(page);
+  const indexRequests: string[] = [];
+  page.on("request", (request) => {
+    if (request.url() === `${iconCdn}index.json`)
+      indexRequests.push(request.url());
+  });
+  await page.goto("/");
+  for (const id of appIds) {
+    const image = page.locator(
+      `.desktop-apps .app-icon[data-brand="${id}"] img`,
+    );
+    const format = id === "seerr" ? "png" : "svg";
+    await expect(image).toHaveAttribute(
+      "src",
+      `${iconCdn}${format}/${id}.${format}`,
+    );
+    await expect
+      .poll(() =>
+        image.evaluate((element) => (element as HTMLImageElement).naturalWidth),
+      )
+      .toBeGreaterThan(0);
+  }
+  expect(indexRequests).toHaveLength(1);
+  expect(errors).toEqual([]);
+});
+
+test("an unreadable remote icon falls back to bundled artwork", async ({
+  page,
+}) => {
+  const failures: string[] = [];
+  page.on("pageerror", (error) => failures.push(error.message));
+  await page.route(`${iconCdn}svg/jellyfin.svg`, (route) =>
+    route.fulfill({
+      status: 200,
+      headers: { "Access-Control-Allow-Origin": "*" },
+      contentType: "image/svg+xml",
+      body: "invalid image",
+    }),
+  );
+  const failedImage = page.waitForResponse(`${iconCdn}svg/jellyfin.svg`);
+  await page.goto("/");
+  await failedImage;
+  const fallback = page.locator(
+    '.desktop-apps .app-icon[data-brand="jellyfin"] img',
+  );
+  await expect(fallback).toHaveAttribute("src", "/icons/jellyfin.svg");
+  await expect
+    .poll(() =>
+      fallback.evaluate(
+        (element) => (element as HTMLImageElement).naturalWidth,
+      ),
+    )
+    .toBeGreaterThan(0);
+  const remote = page.locator(
+    '.desktop-apps .app-icon[data-brand="immich"] img',
+  );
+  await expect(remote).toHaveAttribute("src", `${iconCdn}svg/immich.svg`);
+  expect(failures).toEqual([]);
 });
 
 test("weather refreshes while visible, pauses when hidden, and forgets location when cleared", async ({

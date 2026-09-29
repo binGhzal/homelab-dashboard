@@ -1635,3 +1635,44 @@ button:disabled {
   line-height: 1.5;
   margin: 0 0 18px;
 }
+
+.search-section-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.search-result + .search-section-label {
+  border-top: 1px solid var(--line);
+  margin-top: 9px;
+  padding-top: 15px;
+}
+.search-section-label > span {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.search-action-icon {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(230, 240, 255, 0.05);
+  color: #c7dbe9;
+}
+.search-action:disabled {
+  opacity: 0.45;
+}
+
+.settings-icon-credit {
+  margin: 18px 0 0;
+  color: #b5c5d9;
+  font-size: 11px;
+}
+.settings-icon-credit a {
+  color: #c7e6ee;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}

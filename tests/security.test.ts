@@ -5,7 +5,12 @@ import {
   catalogSchema,
   loadRuntime,
   validateCatalog,
+  type Catalog,
 } from "../server/config.js";
+import type {
+  DiscoveryProvider,
+  DiscoverySnapshot,
+} from "../server/discovery.js";
 import {
   authorizedApps,
   identityFromClaims,
@@ -56,7 +61,10 @@ const instances: FastifyInstance[] = [];
 afterEach(async () => {
   await Promise.all(instances.splice(0).map((app) => app.close()));
 });
-async function fixture(groups = ["users", "jellyfin"]) {
+async function fixture(
+  groups = ["users", "jellyfin"],
+  options: { discovery?: DiscoveryProvider; catalog?: Catalog } = {},
+) {
   let now = Date.now();
   let claims: Record<string, unknown> = {
     sub: "user-one",
@@ -80,7 +88,8 @@ async function fixture(groups = ["users", "jellyfin"]) {
     userinfo,
   };
   const app = await createApp({
-    catalog,
+    catalog: options.catalog ?? catalog,
+    discovery: options.discovery,
     runtime,
     provider,
     staticRoot: false,
@@ -511,5 +520,288 @@ describe("configuration", () => {
         apps: [{ ...catalog.apps[0], widget: { apiKeyEnv: "SECRET" } }],
       }),
     ).toThrow();
+  });
+});
+
+describe("permission-aware discovery integration", () => {
+  function source() {
+    let value: DiscoverySnapshot = {
+      state: "ready",
+      apps: catalogSchema.parse({
+        ...catalog,
+        apps: [
+          {
+            id: "photos",
+            name: "Family photos",
+            href: "https://photos.example.com",
+            iconSlug: "immich",
+            access: { anyOf: [{ allOf: ["users", "photos"] }] },
+          },
+          {
+            id: "discovered-secret",
+            name: "Restricted service",
+            href: "https://restricted.example.com",
+            access: { allowAdmin: true },
+          },
+        ],
+      }).apps,
+      lastSuccessfulSync: new Date().toISOString(),
+      rejectedRoutes: 1,
+      namespaces: ["media"],
+      refreshIntervalSeconds: 30,
+    };
+    const provider: DiscoveryProvider = {
+      start: vi.fn(async () => {}),
+      stop: vi.fn(),
+      refresh: vi.fn(async () => {}),
+      snapshot: vi.fn(() => structuredClone(value)),
+    };
+    return {
+      provider,
+      set: (updates: Partial<DiscoverySnapshot>) => {
+        value = { ...value, ...updates };
+      },
+    };
+  }
+  it("filters discovered apps, search and layouts without disclosing policies or other apps", async () => {
+    const discovery = source();
+    const f = await fixture(["users", "photos"], {
+      discovery: discovery.provider,
+    });
+    const { cookie } = await f.login();
+    const headers = { ...host, cookie };
+    const apps = await f.app.inject({ url: "/api/apps", headers });
+    expect(apps.json().apps.map((app: { id: string }) => app.id)).toEqual([
+      "photos",
+    ]);
+    expect(apps.json().apps[0].iconSlug).toBe("immich");
+    for (const secret of [
+      "discovered-secret",
+      "restricted.example.com",
+      "allowAdmin",
+      "anyOf",
+    ])
+      expect(apps.body).not.toContain(secret);
+    expect(
+      (await f.app.inject({ url: "/api/search?q=Restricted", headers })).json(),
+    ).toEqual({ apps: [] });
+    const preferences = await f.app.inject({
+      url: "/api/preferences",
+      headers,
+    });
+    expect(preferences.json().preferences.order).toEqual(["photos"]);
+    const csrf = (await f.app.inject({ url: "/api/user", headers })).json()
+      .csrfToken;
+    const saved = await f.app.inject({
+      method: "PUT",
+      url: "/api/preferences",
+      headers: { ...headers, origin: runtime.origin, "x-csrf-token": csrf },
+      payload: {
+        revision: 0,
+        catalogRevision: preferences.json().catalogRevision,
+        preferences: {
+          ...defaultPreferences(),
+          order: ["photos", "discovered-secret"],
+          dock: ["discovered-secret", "photos"],
+          folders: [
+            {
+              id: "favorites",
+              name: "Favorites",
+              appIds: ["photos", "discovered-secret"],
+            },
+          ],
+        },
+      },
+    });
+    expect(saved.statusCode).toBe(200);
+    expect(saved.body).not.toContain("discovered-secret");
+  });
+  it("removes disappeared apps immediately and refreshes revoked group membership", async () => {
+    const discovery = source();
+    const f = await fixture(["users", "photos"], {
+      discovery: discovery.provider,
+    });
+    const { cookie } = await f.login();
+    const headers = { ...host, cookie };
+    expect(
+      (await f.app.inject({ url: "/api/apps", headers })).json().apps,
+    ).toHaveLength(1);
+    f.setClaims({ sub: "user-one", groups: ["users"] });
+    f.advance(61000);
+    expect(
+      (await f.app.inject({ url: "/api/apps", headers })).json().apps,
+    ).toEqual([]);
+    f.setClaims({ sub: "user-one", groups: ["users", "photos"] });
+    f.advance(61000);
+    expect(
+      (await f.app.inject({ url: "/api/apps", headers })).json().apps,
+    ).toHaveLength(1);
+    discovery.set({ apps: [] });
+    expect(
+      (await f.app.inject({ url: "/api/apps", headers })).json().apps,
+    ).toEqual([]);
+    expect(
+      (await f.app.inject({ url: "/api/preferences", headers })).json()
+        .preferences.order,
+    ).toEqual([]);
+  });
+  it("keeps static policy authoritative for collisions and cannot grant dashboard admission", async () => {
+    const discovery = source();
+    discovery.set({
+      apps: [
+        {
+          ...catalog.apps[0],
+          name: "Spoofed app",
+          href: "https://untrusted.example.com",
+          access: { allowAdmin: false, anyOf: [{ allOf: ["users"] }] },
+        },
+      ],
+    });
+    const f = await fixture(["users"], { discovery: discovery.provider });
+    const { cookie } = await f.login();
+    expect(
+      (
+        await f.app.inject({ url: "/api/apps", headers: { ...host, cookie } })
+      ).json().apps,
+    ).toEqual([]);
+    const outside = await fixture(["photos"], { discovery: source().provider });
+    expect((await outside.login()).cookie).toBe("");
+  });
+  it.each(["unavailable", "stale"] as const)(
+    "protects saved dynamic layouts during %s discovery and restores them on recovery",
+    async (state) => {
+      const discovery = source();
+      const f = await fixture(["users", "photos", "jellyfin"], {
+        discovery: discovery.provider,
+      });
+      const { cookie } = await f.login();
+      const headers = { ...host, cookie };
+      const csrf = (await f.app.inject({ url: "/api/user", headers })).json()
+        .csrfToken;
+      const writeHeaders = {
+        ...headers,
+        origin: runtime.origin,
+        "x-csrf-token": csrf,
+      };
+      const original = (
+        await f.app.inject({ url: "/api/preferences", headers })
+      ).json();
+      const saved = await f.app.inject({
+        method: "PUT",
+        url: "/api/preferences",
+        headers: writeHeaders,
+        payload: {
+          revision: 0,
+          catalogRevision: original.catalogRevision,
+          preferences: {
+            ...defaultPreferences(),
+            dock: ["photos"],
+            folders: [
+              { id: "favorites", name: "Favorites", appIds: ["photos"] },
+            ],
+          },
+        },
+      });
+      expect(saved.statusCode).toBe(200);
+      discovery.set({ state });
+      expect(
+        (await f.app.inject({ url: "/api/apps", headers }))
+          .json()
+          .apps.map((app: { id: string }) => app.id),
+      ).toEqual(["jellyfin"]);
+      const during = (
+        await f.app.inject({ url: "/api/preferences", headers })
+      ).json();
+      expect(during.preferences.folders).toEqual([]);
+      expect(
+        (
+          await f.app.inject({
+            method: "PUT",
+            url: "/api/preferences",
+            headers: writeHeaders,
+            payload: during,
+          })
+        ).statusCode,
+      ).toBe(503);
+      discovery.set({ state: "ready" });
+      // A draft loaded during the outage must not erase recovered entries.
+      expect(
+        (
+          await f.app.inject({
+            method: "PUT",
+            url: "/api/preferences",
+            headers: writeHeaders,
+            payload: during,
+          })
+        ).statusCode,
+      ).toBe(409);
+      const recovered = (
+        await f.app.inject({ url: "/api/preferences", headers })
+      ).json();
+      expect(recovered.revision).toBe(1);
+      expect(recovered.preferences.dock).toEqual(["photos"]);
+      expect(recovered.preferences.folders[0].appIds).toEqual(["photos"]);
+      expect(
+        (
+          await f.app.inject({
+            method: "PUT",
+            url: "/api/preferences",
+            headers: writeHeaders,
+            payload: recovered,
+          })
+        ).statusCode,
+      ).toBe(200);
+    },
+  );
+  it("restricts safe discovery diagnostics to administrators", async () => {
+    const discovery = source();
+    for (const groups of [["users"], ["admins"]]) {
+      const f = await fixture(groups, { discovery: discovery.provider });
+      expect(
+        (await f.app.inject({ url: "/api/discovery", headers: host }))
+          .statusCode,
+      ).toBe(401);
+      const { cookie } = await f.login();
+      const response = await f.app.inject({
+        url: "/api/discovery",
+        headers: { ...host, cookie },
+      });
+      expect(response.statusCode).toBe(groups.includes("admins") ? 200 : 403);
+      if (response.statusCode === 200) {
+        expect(response.json()).toMatchObject({
+          state: "ready",
+          discoveredApps: 2,
+          rejectedRoutes: 1,
+          namespaces: ["media"],
+        });
+        for (const secret of [
+          "photos",
+          "restricted.example.com",
+          "access",
+          "anyOf",
+        ])
+          expect(response.body).not.toContain(secret);
+      }
+    }
+  });
+  it("fails the dynamic source closed if the combined catalog exceeds the layout capacity", async () => {
+    const discovery = source();
+    discovery.set({
+      apps: Array.from({ length: 100 }, (_, index) => ({
+        ...catalog.apps[0],
+        id: `app-${index}`,
+      })),
+    });
+    const f = await fixture(["admins"], { discovery: discovery.provider });
+    const { cookie } = await f.login();
+    const headers = { ...host, cookie };
+    expect(
+      (await f.app.inject({ url: "/api/apps", headers }))
+        .json()
+        .apps.map((app: { id: string }) => app.id),
+    ).toEqual(["jellyfin", "private"]);
+    expect(
+      (await f.app.inject({ url: "/api/discovery", headers })).json(),
+    ).toMatchObject({ state: "unavailable", discoveredApps: 0 });
   });
 });

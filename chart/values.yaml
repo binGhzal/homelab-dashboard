@@ -16,6 +16,16 @@ existingConfigMap: ""
 catalog: {}
 podLabels: {}
 extraEnv: []
+# Opt-in route discovery. Static catalog entries and access rules remain supported.
+# Kubernetes mode reads only HTTPRoutes in the explicit namespace allowlist.
+# File mode reads an existing ConfigMap in the release namespace without API access.
+discovery:
+  mode: disabled
+  namespaces: []
+  intervalSeconds: 30
+  maxAgeSeconds: 90
+  existingConfigMap: ""
+  fileKey: routes.json
 persistence:
   # Retained single-writer preference database, not application credentials.
   existingClaim: ""

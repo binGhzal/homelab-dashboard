@@ -14,6 +14,14 @@
 {{- if and .Values.httpRoute.enabled (not .Values.httpRoute.parentRefs) -}}
 {{- fail "httpRoute.parentRefs is required" -}}
 {{- end }}
+{{- if lt (int .Values.discovery.maxAgeSeconds) (int .Values.discovery.intervalSeconds) -}}
+{{- fail "discovery.maxAgeSeconds must be at least discovery.intervalSeconds" -}}
+{{- end }}
+{{- range .Values.extraEnv -}}
+{{- if hasPrefix "DASHBOARD_DISCOVERY_" (.name | default "") -}}
+{{- fail "Configure discovery through discovery values, not extraEnv DASHBOARD_DISCOVERY_* overrides" -}}
+{{- end -}}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -34,6 +42,9 @@ spec:
       {{- end }}
     spec:
       automountServiceAccountToken: false
+      {{- if eq .Values.discovery.mode "kubernetes" }}
+      serviceAccountName: {{ .Release.Name }}-discovery
+      {{- end }}
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -64,6 +75,15 @@ spec:
             - {name: PUBLIC_ORIGIN, value: {{ required "publicOrigin is required" .Values.publicOrigin | quote }}}
             - {name: OIDC_ISSUER, value: {{ required "oidcIssuer is required" .Values.oidcIssuer | quote }}}
             - {name: OIDC_CLIENT_ID, value: {{ .Values.oidcClientId | quote }}}
+            {{- if ne .Values.discovery.mode "disabled" }}
+            - {name: DASHBOARD_DISCOVERY_MODE, value: {{ .Values.discovery.mode | quote }}}
+            - {name: DASHBOARD_DISCOVERY_NAMESPACES, value: {{ join "," .Values.discovery.namespaces | quote }}}
+            - {name: DASHBOARD_DISCOVERY_INTERVAL_SECONDS, value: {{ .Values.discovery.intervalSeconds | quote }}}
+            - {name: DASHBOARD_DISCOVERY_MAX_AGE_SECONDS, value: {{ .Values.discovery.maxAgeSeconds | quote }}}
+            {{- if eq .Values.discovery.mode "file" }}
+            - {name: DASHBOARD_DISCOVERY_FILE, value: /discovery/routes.json}
+            {{- end }}
+            {{- end }}
             {{- with .Values.extraEnv }}
             {{- toYaml . | nindent 12 }}
             {{- end }}
@@ -76,6 +96,11 @@ spec:
             - {name: catalog, mountPath: /config, readOnly: true}
             - {name: data, mountPath: /data}
             - {name: tmp, mountPath: /tmp}
+            {{- if eq .Values.discovery.mode "kubernetes" }}
+            - {name: discovery-api, mountPath: /var/run/secrets/dashboard-discovery, readOnly: true}
+            {{- else if eq .Values.discovery.mode "file" }}
+            - {name: discovery-file, mountPath: /discovery, readOnly: true}
+            {{- end }}
       volumes:
         - name: catalog
           configMap: {name: {{ $catalogName }}}
@@ -84,6 +109,28 @@ spec:
         - name: data
           persistentVolumeClaim:
             claimName: {{ .Values.persistence.existingClaim | default (printf "%s-data" .Release.Name) }}
+        {{- if eq .Values.discovery.mode "kubernetes" }}
+        - name: discovery-api
+          projected:
+            defaultMode: 288
+            sources:
+              - serviceAccountToken:
+                  path: token
+                  expirationSeconds: 3600
+              - configMap:
+                  name: kube-root-ca.crt
+                  items:
+                    - {key: ca.crt, path: ca.crt}
+        {{- else if eq .Values.discovery.mode "file" }}
+        - name: discovery-file
+          projected:
+            defaultMode: 292
+            sources:
+              - configMap:
+                  name: {{ .Values.discovery.existingConfigMap | quote }}
+                  items:
+                    - {key: {{ .Values.discovery.fileKey | quote }}, path: routes.json}
+        {{- end }}
 {{- if not .Values.existingConfigMap }}
 ---
 apiVersion: v1

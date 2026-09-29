@@ -18,6 +18,8 @@ export interface PublicApp {
   href: string;
   icon: IconName;
   iconPath?: string;
+  iconSlug?: string;
+  iconSource?: "selfhst" | "local";
   color: string;
   category: string;
 }
@@ -45,5 +47,6 @@ export interface Preferences {
 }
 export interface PreferencesResponse {
   revision: number;
+  catalogRevision?: string;
   preferences: Preferences;
 }
