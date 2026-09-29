@@ -14,28 +14,23 @@ are included.
 - **Tabler Icons React 3.48.0**: MIT, copyright 2020–2026 Paweł Kuna. Interface
   pictograms come from this package. Full notice:
   [docs/licenses/tabler.txt](docs/licenses/tabler.txt).
-- **Simple Icons 16.32.0**: CC0 1.0 Universal. Five bundled brand SVGs under
-  `public/icons` are derived from its package: Jellyfin, Sonarr, Radarr, Grafana,
-  and Authentik. Only the SVG fill color was added. Full dedication:
-  [docs/licenses/simple-icons.txt](docs/licenses/simple-icons.txt).
-  See the [upstream licensing and trademark guidance](https://github.com/simple-icons/simple-icons#license).
-  CC0 does not grant trademark rights. Review each application's branding guidance
-  when using its name or logo in your own distribution.
+- **Official application artwork**: 16 unmodified SVG/PNG assets are bundled from
+  the applications’ own repositories, with their native colors. Each asset retains
+  its upstream license; these include MIT, GPLv3, AGPLv3, MPL-2.0, and CC BY-SA 4.0.
+  Attribution, immutable source links, license copies, trademark considerations,
+  and the three deliberately omitted marks are recorded in
+  [docs/licenses/brand-assets.md](docs/licenses/brand-assets.md). Exact source paths
+  and SHA-256 hashes are in
+  [docs/licenses/brand-assets.json](docs/licenses/brand-assets.json).
+  The MIT license for the dashboard’s original code does not relicense this
+  separately distributed artwork. The original SVG/PNG files accompany the
+  application, and the container includes these notices and license texts.
+  No Simple Icons brand artwork remains in the distribution.
 - **Landscape wallpaper**: generated specifically for this project with OpenAI's
   image generation service in September 2026; no Umbrel image was used as an
   input. The resulting image was encoded as WebP. The project includes the image
   under the same distribution terms as its original assets, to the extent
   copyright rights exist. No third-party ownership or exclusivity is asserted.
-
-Simple Icons records the following sources for the included marks:
-
-| Asset     | Upstream source                                                                                           |
-| --------- | --------------------------------------------------------------------------------------------------------- |
-| Jellyfin  | https://jellyfin.org/docs/general/contributing/branding.html                                              |
-| Sonarr    | https://github.com/Sonarr/Sonarr/blob/913b845faadc3c9fc005abfba815426743d01bdf/Logo/Sonarr.svg            |
-| Radarr    | https://github.com/Radarr/Radarr/blob/5f624a147bb62d37b731d9a0ae02bfd338793962/Logo/Radarr.svg            |
-| Grafana   | https://grafana.com                                                                                       |
-| Authentik | https://github.com/goauthentik/authentik/blob/2c64f72ebc57dad9789c1fb799dd7cd39003d043/web/icons/icon.svg |
 
 ## Weather service
 

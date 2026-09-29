@@ -1,44 +1,45 @@
 import { catalogSchema } from "./config.js";
 import type { Identity } from "./access.js";
+
 export const demoIdentity: Identity = {
   sub: "local-demo",
   givenName: "Alex",
   displayName: "Alex Morgan",
   groups: ["demo-admins"],
 };
-const names = [
-  ["jellyfin", "Jellyfin", "play", "#181526", "Your movies, series and music"],
-  ["seerr", "Seerr", "tickets", "#287bea", "Find your next watch"],
-  ["sonarr", "Sonarr", "tv", "#174250", "Your series and anime"],
-  ["radarr", "Radarr", "film", "#ca9a45", "Your movie collection"],
-  ["prowlarr", "Prowlarr", "search", "#cd776b", "Search your indexers"],
-  ["bazarr", "Bazarr", "subtitles", "#7566dc", "Subtitles for every story"],
+
+// Illustrative public applications and reserved example domains only.
+const apps = [
+  ["jellyfin", "Jellyfin", "Your movies, series and music", "Media"],
+  ["immich", "Immich", "A home for your photos and videos", "Photos"],
+  ["seerr", "Seerr", "Discover and request something to watch", "Media"],
   [
-    "listseerr",
-    "Listseerr",
-    "list",
-    "#189bb0",
-    "Turn watchlists into requests",
+    "paperless-ngx",
+    "Paperless-ngx",
+    "Find your documents in one place",
+    "Documents",
   ],
-  ["decypharr", "Decypharr", "download", "#b94f86", "Manage your downloads"],
-  ["grafana", "Grafana", "chart", "#17202d", "Your system dashboards"],
+  ["audiobookshelf", "Audiobookshelf", "Your audiobooks and podcasts", "Audio"],
+  ["vaultwarden", "Vaultwarden", "Your personal password vault", "Utilities"],
+  ["syncthing", "Syncthing", "Keep your files in sync", "Files"],
+  ["gitea", "Gitea", "A place for your code and projects", "Development"],
+  ["freshrss", "FreshRSS", "Follow your favorite publications", "Reading"],
 ];
+
 export const demoCatalog = catalogSchema.parse({
   version: 1,
   title: "Home",
   adminGroups: ["demo-admins"],
   access: { allowAdmin: true },
-  apps: names.map(([id, name, icon, color, description]) => ({
+  apps: apps.map(([id, name, description, category]) => ({
     id,
     name,
-    icon,
-    color,
     description,
+    category,
     href: `https://${id}.example.com`,
-    category: "Media",
+    icon: "link",
+    color: "#edf1f5",
+    iconPath: `/icons/${id}.${id === "seerr" ? "png" : "svg"}`,
     access: { allowAdmin: true },
-    ...(["jellyfin", "sonarr", "radarr", "grafana"].includes(id)
-      ? { iconPath: `/icons/${id}.svg` }
-      : {}),
   })),
 });

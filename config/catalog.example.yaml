@@ -19,24 +19,25 @@ apps:
       allowAdmin: true
       anyOf:
         - allOf: [dashboard-users, app-jellyfin]
-  - id: seerr
-    name: Seerr
-    description: Discover and request something to watch
-    href: https://seerr.example.com
-    icon: tickets
-    color: "#287bea"
-    category: Media
+  - id: immich
+    name: Immich
+    description: A home for your photos and videos
+    href: https://immich.example.com
+    icon: link
+    iconPath: /icons/immich.svg
+    color: "#edf1f5"
+    category: Photos
     access:
       allowAdmin: true
       anyOf:
-        - allOf: [dashboard-users, app-seerr]
-  - id: grafana
-    name: Grafana
-    description: System metrics and dashboards
-    href: https://grafana.example.com
-    icon: chart
-    iconPath: /icons/grafana.svg
-    color: "#17202d"
-    category: Administration
+        - allOf: [dashboard-users, app-immich]
+  - id: gitea
+    name: Gitea
+    description: A place for your code and projects
+    href: https://gitea.example.com
+    icon: link
+    iconPath: /icons/gitea.svg
+    color: "#edf1f5"
+    category: Development
     access:
       allowAdmin: true
