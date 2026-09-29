@@ -65,6 +65,8 @@ function publicApp(app: CatalogApp, admin: boolean): PublicApp {
     href: app.href,
     icon: app.icon,
     ...(app.iconPath ? { iconPath: app.iconPath } : {}),
+    ...(app.iconSlug ? { iconSlug: app.iconSlug } : {}),
+    iconSource: app.iconSource,
     color: app.color,
     category: app.category,
   };

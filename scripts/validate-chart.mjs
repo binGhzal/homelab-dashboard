@@ -25,9 +25,12 @@ function runHelm(command, values) {
   });
 }
 
-function render(values) {
+function render(values, namespace = "default") {
   const documents = parseAllDocuments(
-    runHelm(["template", "dashboard", "chart"], values),
+    runHelm(
+      ["template", "dashboard", "chart", "--namespace", namespace],
+      values,
+    ),
   );
   for (const document of documents) assert.deepEqual(document.errors, []);
   return documents.map((document) => document.toJS()).filter(Boolean);
@@ -69,9 +72,45 @@ function checkDeployment(documents, claimName) {
 function mustReject(values, message) {
   assert.throws(
     () => render(values),
-    (error) => error.stderr?.includes(message),
+    (error) =>
+      error.stderr?.includes(message) ||
+      error.stderr?.includes(message.replaceAll(".", "/")),
     `Expected Helm to reject: ${message}`,
   );
+}
+
+function discoveryEnv(pod) {
+  return Object.fromEntries(
+    pod.spec.containers[0].env
+      .filter((entry) => entry.name.startsWith("DASHBOARD_DISCOVERY_"))
+      .map((entry) => [entry.name, entry.value]),
+  );
+}
+
+function checkNoDiscoveryCredentials(documents, pod) {
+  assert.equal(pod.spec.automountServiceAccountToken, false);
+  assert.equal(pod.spec.serviceAccountName, undefined);
+  for (const kind of [
+    "ServiceAccount",
+    "Role",
+    "RoleBinding",
+    "ClusterRole",
+    "ClusterRoleBinding",
+    "Secret",
+  ]) {
+    assert.equal(
+      documents.filter((document) => document.kind === kind).length,
+      0,
+      `Unexpected ${kind}`,
+    );
+  }
+  for (const volume of pod.spec.volumes) {
+    assert.equal(volume.secret, undefined);
+    for (const source of volume.projected?.sources ?? []) {
+      assert.equal(source.serviceAccountToken, undefined);
+      assert.equal(source.secret, undefined);
+    }
+  }
 }
 
 try {
@@ -82,6 +121,14 @@ try {
   runHelm(["lint", "chart", "--strict"], externalValues);
   const external = render(externalValues);
   const externalPod = checkDeployment(external, "dashboard-data");
+  checkNoDiscoveryCredentials(external, externalPod);
+  assert.deepEqual(discoveryEnv(externalPod), {});
+  assert.equal(
+    externalPod.spec.volumes.some((volume) =>
+      volume.name.startsWith("discovery"),
+    ),
+    false,
+  );
   assert.equal(
     external.filter((document) => document.kind === "ConfigMap").length,
     0,
@@ -199,6 +246,259 @@ try {
     "2Gi",
   );
 
+  const kubernetesValues = {
+    ...externalValues,
+    discovery: { mode: "kubernetes", namespaces: ["media", "documents"] },
+  };
+  runHelm(["lint", "chart", "--strict"], kubernetesValues);
+  const kubernetes = render(kubernetesValues, "dashboard-system");
+  const kubernetesPod = checkDeployment(kubernetes, "dashboard-data");
+  assert.equal(kubernetesPod.spec.automountServiceAccountToken, false);
+  assert.equal(kubernetesPod.spec.serviceAccountName, "dashboard-discovery");
+  assert.deepEqual(discoveryEnv(kubernetesPod), {
+    DASHBOARD_DISCOVERY_MODE: "kubernetes",
+    DASHBOARD_DISCOVERY_NAMESPACES: "media,documents",
+    DASHBOARD_DISCOVERY_INTERVAL_SECONDS: "30",
+    DASHBOARD_DISCOVERY_MAX_AGE_SECONDS: "90",
+  });
+  const account = resource(kubernetes, "ServiceAccount");
+  assert.equal(account.metadata.name, "dashboard-discovery");
+  assert.equal(account.metadata.namespace, "dashboard-system");
+  assert.equal(account.automountServiceAccountToken, false);
+  assert.equal(account.secrets, undefined);
+  assert.deepEqual(
+    kubernetesPod.spec.volumes.find(
+      (volume) => volume.name === "discovery-api",
+    ),
+    {
+      name: "discovery-api",
+      projected: {
+        defaultMode: 288,
+        sources: [
+          { serviceAccountToken: { path: "token", expirationSeconds: 3600 } },
+          {
+            configMap: {
+              name: "kube-root-ca.crt",
+              items: [{ key: "ca.crt", path: "ca.crt" }],
+            },
+          },
+        ],
+      },
+    },
+  );
+  assert.deepEqual(
+    kubernetesPod.spec.containers[0].volumeMounts.find(
+      (mount) => mount.name === "discovery-api",
+    ),
+    {
+      name: "discovery-api",
+      mountPath: "/var/run/secrets/dashboard-discovery",
+      readOnly: true,
+    },
+  );
+  for (const kind of ["ClusterRole", "ClusterRoleBinding", "Secret"]) {
+    assert.equal(
+      kubernetes.filter((document) => document.kind === kind).length,
+      0,
+    );
+  }
+  for (const kind of ["Role", "RoleBinding"]) {
+    const scoped = kubernetes.filter((document) => document.kind === kind);
+    assert.deepEqual(
+      scoped.map((document) => document.metadata.namespace).sort(),
+      ["documents", "media"],
+    );
+    for (const document of scoped) {
+      assert.equal(
+        document.metadata.name,
+        "dashboard-system-dashboard-discovery",
+      );
+      if (kind === "Role") {
+        assert.deepEqual(document.rules, [
+          {
+            apiGroups: ["gateway.networking.k8s.io"],
+            resources: ["httproutes"],
+            verbs: ["get", "list"],
+          },
+        ]);
+      } else {
+        assert.deepEqual(document.subjects, [
+          {
+            kind: "ServiceAccount",
+            name: "dashboard-discovery",
+            namespace: "dashboard-system",
+          },
+        ]);
+        assert.deepEqual(document.roleRef, {
+          apiGroup: "rbac.authorization.k8s.io",
+          kind: "Role",
+          name: "dashboard-system-dashboard-discovery",
+        });
+      }
+    }
+  }
+  // Different releases named dashboard in different namespaces must not share RBAC objects.
+  const otherNamespace = render(kubernetesValues, "other-dashboard");
+  assert.equal(
+    otherNamespace.find((document) => document.kind === "Role").metadata.name,
+    "other-dashboard-dashboard-discovery",
+  );
+
+  const fileValues = {
+    ...externalValues,
+    discovery: {
+      mode: "file",
+      namespaces: ["media"],
+      intervalSeconds: 45,
+      maxAgeSeconds: 120,
+      existingConfigMap: "route-snapshot",
+      fileKey: "snapshot.json",
+    },
+  };
+  runHelm(["lint", "chart", "--strict"], fileValues);
+  const file = render(fileValues);
+  const filePod = checkDeployment(file, "dashboard-data");
+  checkNoDiscoveryCredentials(file, filePod);
+  assert.deepEqual(discoveryEnv(filePod), {
+    DASHBOARD_DISCOVERY_MODE: "file",
+    DASHBOARD_DISCOVERY_NAMESPACES: "media",
+    DASHBOARD_DISCOVERY_INTERVAL_SECONDS: "45",
+    DASHBOARD_DISCOVERY_MAX_AGE_SECONDS: "120",
+    DASHBOARD_DISCOVERY_FILE: "/discovery/routes.json",
+  });
+  assert.deepEqual(
+    filePod.spec.volumes.find((volume) => volume.name === "discovery-file"),
+    {
+      name: "discovery-file",
+      projected: {
+        defaultMode: 292,
+        sources: [
+          {
+            configMap: {
+              name: "route-snapshot",
+              items: [{ key: "snapshot.json", path: "routes.json" }],
+            },
+          },
+        ],
+      },
+    },
+  );
+  assert.deepEqual(
+    filePod.spec.containers[0].volumeMounts.find(
+      (mount) => mount.name === "discovery-file",
+    ),
+    {
+      name: "discovery-file",
+      mountPath: "/discovery",
+      readOnly: true,
+    },
+  );
+  assert.equal(
+    file.filter((document) => document.kind === "ConfigMap").length,
+    0,
+  );
+  const disabled = render({
+    ...externalValues,
+    discovery: { mode: "disabled", namespaces: ["media"] },
+  });
+  const disabledPod = checkDeployment(disabled, "dashboard-data");
+  checkNoDiscoveryCredentials(disabled, disabledPod);
+  assert.deepEqual(discoveryEnv(disabledPod), {});
+
+  for (const [intervalSeconds, maxAgeSeconds] of [
+    [10, 10],
+    [300, 900],
+  ]) {
+    const boundary = render({
+      ...kubernetesValues,
+      discovery: {
+        ...kubernetesValues.discovery,
+        intervalSeconds,
+        maxAgeSeconds,
+      },
+    });
+    assert.equal(
+      discoveryEnv(resource(boundary, "Deployment").spec.template)
+        .DASHBOARD_DISCOVERY_INTERVAL_SECONDS,
+      String(intervalSeconds),
+    );
+  }
+  for (const mode of ["file", "kubernetes"]) {
+    mustReject(
+      { ...externalValues, discovery: { mode } },
+      "discovery.namespaces",
+    );
+  }
+  for (const namespaces of [
+    ["media", "media"],
+    ["*"],
+    [""],
+    ["Media"],
+    ["media.apps"],
+    ["-media"],
+    ["media-"],
+    ["media/routes"],
+    ["n".repeat(64)],
+    [42],
+    Array.from({ length: 33 }, (_, index) => `namespace-${index}`),
+  ]) {
+    mustReject(
+      { ...externalValues, discovery: { mode: "kubernetes", namespaces } },
+      "discovery.namespaces",
+    );
+  }
+  for (const [field, values] of Object.entries({
+    mode: ["auto", "Kubernetes", true],
+    intervalSeconds: [9, 301, 30.5, "30"],
+    maxAgeSeconds: [9, 901, 90.5, "90"],
+  })) {
+    for (const value of values) {
+      mustReject(
+        {
+          ...kubernetesValues,
+          discovery: { ...kubernetesValues.discovery, [field]: value },
+        },
+        `discovery.${field}`,
+      );
+    }
+  }
+  mustReject(
+    {
+      ...kubernetesValues,
+      discovery: {
+        ...kubernetesValues.discovery,
+        intervalSeconds: 100,
+        maxAgeSeconds: 90,
+      },
+    },
+    "discovery.maxAgeSeconds must be at least discovery.intervalSeconds",
+  );
+  for (const existingConfigMap of ["", "Invalid", "namespace/map"]) {
+    mustReject(
+      {
+        ...fileValues,
+        discovery: { ...fileValues.discovery, existingConfigMap },
+      },
+      "discovery.existingConfigMap",
+    );
+  }
+  for (const fileKey of ["", "../routes.json", "path/routes.json"]) {
+    mustReject(
+      { ...fileValues, discovery: { ...fileValues.discovery, fileKey } },
+      "discovery.fileKey",
+    );
+  }
+  for (const name of [
+    "DASHBOARD_DISCOVERY_MODE",
+    "DASHBOARD_DISCOVERY_NAMESPACES",
+    "DASHBOARD_DISCOVERY_FILE",
+  ]) {
+    mustReject(
+      { ...externalValues, extraEnv: [{ name, value: "override" }] },
+      "Configure discovery through discovery values",
+    );
+  }
+
   mustReject({ image: { tag: "ci" } }, "Set catalog or existingConfigMap");
   mustReject(
     { ...externalValues, catalog },
@@ -224,7 +524,7 @@ try {
     "httpRoute.hostname is required",
   );
   console.log(
-    "Helm chart validation passed: external and inline catalogs, rollout checksum, digest image, labels/env, storage, route, and invalid inputs.",
+    "Helm chart validation passed: external and inline catalogs, rollout checksum, digest image, labels/env, storage, route, credential-free default, scoped Kubernetes discovery, file discovery, and invalid inputs.",
   );
 } finally {
   rmSync(directory, { recursive: true, force: true });

@@ -13,9 +13,26 @@ jobs:
   validate:
     runs-on: ubuntu-24.04
     timeout-minutes: 20
+    outputs:
+      image_changed: ${{ steps.scope.outputs.image_changed }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with: {persist-credentials: false}
+        with: {persist-credentials: false, fetch-depth: 0}
+      - id: scope
+        name: Determine whether application image inputs changed
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          image_changed=true
+          if [ "$EVENT_NAME" = push ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            if git diff --quiet "$BEFORE" "$GITHUB_SHA" -- Dockerfile .dockerignore package.json pnpm-lock.yaml pnpm-workspace.yaml 'tsconfig*.json' vite.config.ts vitest.config.ts index.html server shared src public tests config/catalog.example.yaml LICENSE THIRD_PARTY_NOTICES.md docs/licenses; then
+              image_changed=false
+            fi
+          fi
+          printf 'image_changed=%s\n' "$image_changed" >> "$GITHUB_OUTPUT"
+      - name: Test chart publication safeguards
+        run: python3 -B -m unittest discover -s scripts -p 'test_publish_chart.py'
       - name: Install checksum-pinned validation tools
         shell: bash
         run: |
@@ -53,7 +70,7 @@ jobs:
           severity: CRITICAL,HIGH
           version: v0.74.0
   publish:
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && needs.validate.outputs.image_changed == 'true'
     needs: validate
     runs-on: ubuntu-24.04
     timeout-minutes: 20
@@ -96,3 +113,25 @@ jobs:
           IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
         run: |
           printf 'Tested image (linux/amd64): `%s@%s`\n' "$IMAGE_NAME" "$IMAGE_DIGEST" >> "$GITHUB_STEP_SUMMARY"
+  publish-chart:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with: {persist-credentials: false}
+      - name: Install checksum-pinned Helm
+        run: |
+          tool_dir=$(mktemp -d)
+          curl -fsSL --retry 3 --max-time 120 https://get.helm.sh/helm-v3.19.0-linux-amd64.tar.gz -o "$tool_dir/helm.tgz"
+          printf '%s  %s\n' a7f81ce08007091b86d8bd696eb4d86b8d0f2e1b9f6c714be62f82f96a594496 "$tool_dir/helm.tgz" | sha256sum -c -
+          tar -xzf "$tool_dir/helm.tgz" -C "$tool_dir" linux-amd64/helm
+          printf 'HELM_BIN=%s\n' "$tool_dir/linux-amd64/helm" >> "$GITHUB_ENV"
+      - name: Publish chart without replacing existing versions and verify public pull
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 -B scripts/publish_chart.py

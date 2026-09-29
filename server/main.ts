@@ -6,9 +6,11 @@ import { startTelemetry } from "./telemetry.js";
 import { PreferencesStore } from "./preferences.js";
 import { mkdirSync, chmodSync } from "node:fs";
 import { resolve } from "node:path";
+import { createDiscovery, loadDiscoveryConfig } from "./discovery.js";
 
 try {
   const runtime = loadRuntime();
+  const discoveryConfig = loadDiscoveryConfig();
   const telemetry = startTelemetry();
   if (!runtime.demo && !process.env.DASHBOARD_CONFIG)
     throw new Error("DASHBOARD_CONFIG required");
@@ -25,7 +27,17 @@ try {
     : ":memory:";
   const preferences = new PreferencesStore(databasePath);
   if (directory) chmodSync(databasePath, 0o600);
-  const app = await createApp({ runtime, catalog, provider, preferences });
+  const discovery = discoveryConfig
+    ? createDiscovery(discoveryConfig)
+    : undefined;
+  await discovery?.start();
+  const app = await createApp({
+    runtime,
+    catalog,
+    provider,
+    preferences,
+    discovery,
+  });
   await app.listen({ host: runtime.host, port: runtime.port });
   console.log(
     `Dashboard listening on port ${runtime.port}${runtime.demo ? " (loopback-only synthetic demo)" : ""}`,
