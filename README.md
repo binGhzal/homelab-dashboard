@@ -15,7 +15,7 @@ either scoped HTTPRoute read access or a projected file from an external control
 
 ## Try the local demo
 
-Use Node 24 and the exact pnpm version in `package.json`:
+Use Node 26 with the minimum version and exact pnpm version declared in `package.json`:
 
 ```sh
 pnpm install --frozen-lockfile
