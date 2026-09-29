@@ -112,7 +112,10 @@ Each linked application must independently enforce its own access policy.
 Hiding its launcher cannot secure the application's URL. Match dashboard groups
 to the gateway or application's real authorization rules.
 
-Application icons can use included SVGs or an operator-provided same-origin
+Official app artwork and its original licenses are documented in
+[the asset manifest](docs/licenses/brand-assets.md). Known apps use unmodified
+upstream artwork; unavailable marks use neutral initials. Application icons can
+use included SVGs or an operator-provided same-origin
 `/icons/<filename>.svg`, `.png` or `.webp`, baked into the image or mounted into
 the built client's icons directory. Only install trusted SVG files. `wallpaper`
 selects a same-origin asset under `/wallpapers`; users can choose that landscape
@@ -121,11 +124,17 @@ upstream HTTP proxy are exposed.
 
 ## Desktop, privacy and recovery
 
-Drag app tiles to reorder them or drop one into a folder. Each tile's options
-also provides movement controls suitable for keyboard and touch. Settings
-supports folder creation, wallpaper selection and editing mode. The dock holds
-up to eight apps. Search opens with its button or `Ctrl/Cmd + K`. Folders can be
-renamed or dissolved without removing their apps.
+Open the account menu at the top right for settings, wallpaper, folder creation,
+rearranging and sign out. The bottom dock contains app shortcuts only. Its
+customizer can pin, remove and reorder up to eight favorites; drag a desktop app
+to the dock to pin it.
+
+Drag app tiles to reorder them or drop one into a folder. The options menu and
+Rearrange mode provide buttons for keyboard and touch, with `Alt + Left/Right`
+shortcuts on a focused tile. Folders can be renamed or removed while keeping their
+apps. Search opens with its button or `Ctrl/Cmd + K`; use arrow keys to navigate,
+Enter to open and Escape to close. Dialogs return focus to their opening control.
+Save errors and stale-layout conflicts remain visible inside the open dialog.
 
 Preferences contain only app IDs, folder names, ordering, dock entries and a
 wallpaper selection. SQLite keys are SHA-256 hashes of the exact issuer and
@@ -182,7 +191,10 @@ cross-browser persistence. They make no requests to real media applications.
 
 A local Chromium executable can be selected with
 `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`; otherwise Playwright's installed browser is
-used. `test-results/` holds generated synthetic screenshots and is not committed.
+used. Browser screenshots default to `/tmp/dashboard-ui-revision`; set
+`DASHBOARD_QA_DIR` to choose another output directory. The selected synthetic
+review captures in [docs/review](docs/review/desktop-revision.md) document this UI
+revision; generated test reports remain outside version control.
 
 With Helm available, run `node scripts/validate-chart.mjs` to check deployment
 structure, inline and external catalogs, persistent storage, and routing options.

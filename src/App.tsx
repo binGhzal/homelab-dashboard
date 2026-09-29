@@ -47,6 +47,7 @@ export default function App() {
       setApps(catalogue.apps);
       setLayout(preferences);
       setStatus("ready");
+      setActionError("");
     } catch (error) {
       if (
         signedOut.current ||
@@ -96,7 +97,7 @@ export default function App() {
     };
   }, []);
   async function save(preferences: Preferences) {
-    if (!user || !layout || savingRef.current) return;
+    if (!user || !layout || savingRef.current) return false;
     savingRef.current = true;
     generation.current++;
     setSaving(true);
@@ -112,12 +113,14 @@ export default function App() {
           body: JSON.stringify({ revision: layout.revision, preferences }),
         }),
       );
+      return true;
     } catch (error) {
       setActionError(
         error instanceof ApiError && error.status === 409
           ? "Your layout changed in another browser. Refresh and try again."
           : "Could not save your layout. Please try again.",
       );
+      return false;
     } finally {
       savingRef.current = false;
       setSaving(false);
@@ -196,12 +199,6 @@ export default function App() {
     >
       <main className="dashboard">
         <section className="greeting-section">
-          <IconHome
-            className="home-emblem"
-            size={58}
-            stroke={1.4}
-            aria-hidden="true"
-          />
           <h1>{greeting(user.givenName)}</h1>
         </section>
         <div className="desktop-information">
@@ -234,6 +231,8 @@ export default function App() {
           setQuery={setQuery}
           save={save}
           saving={saving}
+          error={actionError}
+          refresh={() => void refresh()}
           logout={() => void logout()}
         />
         <footer className="footer">
