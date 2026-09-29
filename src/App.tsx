@@ -110,15 +110,21 @@ export default function App() {
             "Content-Type": "application/json",
             "X-CSRF-Token": user.csrfToken,
           },
-          body: JSON.stringify({ revision: layout.revision, preferences }),
+          body: JSON.stringify({
+            revision: layout.revision,
+            catalogRevision: layout.catalogRevision,
+            preferences,
+          }),
         }),
       );
       return true;
     } catch (error) {
       setActionError(
         error instanceof ApiError && error.status === 409
-          ? "Your layout changed in another browser. Refresh and try again."
-          : "Could not save your layout. Please try again.",
+          ? "Your layout or available apps changed. Refresh and try again."
+          : error instanceof ApiError && error.status === 503
+            ? "App discovery is temporarily unavailable. Your saved layout is unchanged; try again shortly."
+            : "Could not save your layout. Please try again.",
       );
       return false;
     } finally {

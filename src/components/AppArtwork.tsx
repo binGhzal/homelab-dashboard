@@ -1,6 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { PublicApp } from "../../shared/types";
-import { brandIcons } from "../brand-icons";
+import { iconCatalogLoader, iconSources } from "../icon-catalog";
 
 export function AppArtwork({
   app,
@@ -9,25 +9,45 @@ export function AppArtwork({
   app: PublicApp;
   small?: boolean;
 }) {
-  const artwork = brandIcons[app.id];
-  const source = artwork?.unavailable
-    ? undefined
-    : (artwork?.src ?? app.iconPath);
-  const [failedSource, setFailedSource] = useState<string>();
-  const available = source && failedSource !== source;
+  const [catalog, setCatalog] = useState(iconCatalogLoader.peek);
+  const [failedSources, setFailedSources] = useState<string[]>([]);
+  useEffect(() => {
+    if (app.iconSource === "local") return;
+    let active = true;
+    void iconCatalogLoader.load().then((result) => {
+      if (active) setCatalog(result);
+    });
+    return () => {
+      active = false;
+    };
+  }, [app.iconSource]);
+  useEffect(() => {
+    setFailedSources([]);
+  }, [app.id, app.iconPath, app.iconSlug, app.iconSource]);
+  const source = iconSources(app, catalog).find(
+    (candidate) => !failedSources.includes(candidate),
+  );
+  const available = Boolean(source);
   return (
     <span
       className={`app-icon${small ? " app-icon-small" : ""}${available ? " has-artwork" : " app-monogram"}`}
       data-brand={app.id}
       aria-hidden="true"
     >
-      {available ? (
+      {source ? (
         <img
+          key={source}
           src={source}
           alt=""
           draggable={false}
           decoding="async"
-          onError={() => setFailedSource(source)}
+          crossOrigin="anonymous"
+          referrerPolicy="no-referrer"
+          onError={() =>
+            setFailedSources((failed) =>
+              failed.includes(source) ? failed : [...failed, source],
+            )
+          }
         />
       ) : (
         <span>{app.name.slice(0, 2).toLocaleUpperCase()}</span>

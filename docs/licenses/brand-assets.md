@@ -64,8 +64,10 @@ also recorded in [brand-assets.json](brand-assets.json).
 
 ## Artwork intentionally not bundled
 
-The frontend records the following IDs as unavailable and displays neutral initials.
-It does not request old bundled artwork paths or fabricate replacement logos.
+The following applications have no artwork bundled with this project. This records
+the distribution decision for local files; it does not disable the separately
+configured remote collection. Without a resolved remote image or an administrator's
+local `iconPath`, these applications display neutral initials.
 
 | Application    | Reason and authoritative source                                                                                                                                                                                                                                                                                                                                                                                                   |
 | -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
@@ -76,5 +78,46 @@ It does not request old bundled artwork paths or fabricate replacement logos.
 This is a record of the project’s asset selection, not a representation that any
 owner has granted an additional trademark license. Administrators can supply their
 own appropriately licensed artwork for other applications using the catalog’s
-`iconPath` setting. The known restricted IDs intentionally retain the initials
-fallback in this distribution.
+`iconPath` setting. Selecting a remotely hosted image does not override the original
+owner's terms or supply additional permission.
+
+## Remote selfh.st icon collection
+
+**Icon collection: [selfh.st/icons](https://selfh.st/icons/), by selfh.st and
+contributors, [CC BY 4.0](https://github.com/selfhst/icons/blob/main/LICENSE).**
+This credit applies to the remote collection integration. The 16 separately
+bundled fallback files retain the individual provenance and licenses above.
+
+The browser uses the collection's
+[published index](https://github.com/selfhst/icons/blob/main/index.json) and the
+[documented CDN integration](https://selfh.st/icons-about/) at
+`https://cdn.jsdelivr.net/gh/selfhst/icons@main/`. It selects an existing original
+SVG, or WebP/PNG when SVG is unavailable, and displays the image without recoloring
+or modifying it. Recolored `-light`/`-dark` variants are not requested. The collection
+may change over time; CDN caching can delay updates. The dashboard does not copy
+these remote assets into its repository or container.
+
+The collection documents sources including application repositories, websites and
+other icon collections. Remote images are therefore not represented as byte-for-byte
+copies from each application's official repository. The project does not redraw
+or generate application logos. The
+[collection's attribution and disclaimer](https://selfh.st/icons-about/) identify
+the original owners and state that selfh.st is not affiliated with them.
+
+Copyright and trademark conditions still apply to remote use. The collection's
+CC BY 4.0 notice is not a grant of trademark rights and does not establish that
+every possible deployment is authorized by each brand. In particular, remote
+availability of Grafana, Home Assistant or Nextcloud does not remove the conditions
+linked in the local distribution table above. Administrators should select artwork
+appropriate to their installation; `iconSource: local` disables remote requests
+for that application and uses its configured local path, bundled artwork, or
+neutral initials.
+
+Automatic matching uses the application's exact ID and then its normalized name
+against index entries. An optional `iconSlug` selects an exact index `Reference`;
+an unknown slug makes no guessed asset request. The full index is shared across
+tiles, fetched without credentials or a referrer, bounded in size and time, and
+cached for the page lifetime. Images also omit cross-origin credentials and
+referrers. The CDN still receives the visitor's network request and the selected
+public icon reference. Failed index or image requests fall back to local artwork
+and then initials without preventing application links from opening.

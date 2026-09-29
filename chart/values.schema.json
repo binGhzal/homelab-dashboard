@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["discovery"],
+  "properties": {
+    "discovery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "namespaces",
+        "intervalSeconds",
+        "maxAgeSeconds",
+        "existingConfigMap",
+        "fileKey"
+      ],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["disabled", "kubernetes", "file"]
+        },
+        "namespaces": {
+          "type": "array",
+          "maxItems": 32,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 63,
+            "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+          }
+        },
+        "intervalSeconds": { "type": "integer", "minimum": 10, "maximum": 300 },
+        "maxAgeSeconds": { "type": "integer", "minimum": 10, "maximum": 900 },
+        "existingConfigMap": {
+          "type": "string",
+          "maxLength": 253,
+          "pattern": "^$|^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?(\\.[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?)*$"
+        },
+        "fileKey": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 253,
+          "pattern": "^[A-Za-z0-9._-]+$"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "mode": { "enum": ["kubernetes", "file"] } }
+          },
+          "then": { "properties": { "namespaces": { "minItems": 1 } } }
+        },
+        {
+          "if": { "properties": { "mode": { "const": "file" } } },
+          "then": { "properties": { "existingConfigMap": { "minLength": 1 } } }
+        }
+      ]
+    }
+  }
+}

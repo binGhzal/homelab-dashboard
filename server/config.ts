@@ -30,6 +30,46 @@ export function safeUrl(value: string, allowHttp = false): URL {
   }
   return url;
 }
+export const appSchema = z
+  .object({
+    id: z.string().regex(/^[a-z][a-z0-9-]{0,49}$/),
+    name: text,
+    description: z.string().max(180).default(""),
+    href: z.string().url(),
+    icon: z
+      .enum([
+        "play",
+        "tickets",
+        "tv",
+        "film",
+        "search",
+        "subtitles",
+        "list",
+        "download",
+        "settings",
+        "chart",
+        "users",
+        "link",
+      ])
+      .default("link"),
+    iconPath: z
+      .string()
+      .regex(/^\/icons\/[a-z0-9][a-z0-9._-]*\.(svg|png|webp)$/)
+      .optional(),
+    iconSlug: z
+      .string()
+      .regex(/^[a-z0-9][a-z0-9-]{0,99}$/)
+      .optional(),
+    iconSource: z.enum(["selfhst", "local"]).default("selfhst"),
+    color: z
+      .string()
+      .regex(/^#[0-9a-fA-F]{6}$/)
+      .default("#268ca2"),
+    category: text.default("Apps"),
+    access: policySchema,
+  })
+  .strict();
+
 export const catalogSchema = z
   .object({
     version: z.literal(1),
@@ -42,44 +82,7 @@ export const catalogSchema = z
       .default("/wallpapers/landscape.webp"),
     adminGroups: z.array(group).max(20).default([]),
     access: policySchema,
-    apps: z
-      .array(
-        z
-          .object({
-            id: z.string().regex(/^[a-z][a-z0-9-]{0,49}$/),
-            name: text,
-            description: z.string().max(180).default(""),
-            href: z.string().url(),
-            icon: z
-              .enum([
-                "play",
-                "tickets",
-                "tv",
-                "film",
-                "search",
-                "subtitles",
-                "list",
-                "download",
-                "settings",
-                "chart",
-                "users",
-                "link",
-              ])
-              .default("link"),
-            iconPath: z
-              .string()
-              .regex(/^\/icons\/[a-z0-9][a-z0-9._-]*\.(svg|png|webp)$/)
-              .optional(),
-            color: z
-              .string()
-              .regex(/^#[0-9a-fA-F]{6}$/)
-              .default("#268ca2"),
-            category: text.default("Apps"),
-            access: policySchema,
-          })
-          .strict(),
-      )
-      .max(100),
+    apps: z.array(appSchema).max(100),
   })
   .strict();
 export type Catalog = z.infer<typeof catalogSchema>;

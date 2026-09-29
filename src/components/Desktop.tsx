@@ -370,6 +370,55 @@ export function Desktop({
       folderDialog.current?.close();
   }, [openFolder, preferences.folders]);
 
+  function desktopActions(
+    getTrigger: () => HTMLElement | null | undefined = () => account.current,
+  ): (MenuAction & { keywords: string })[] {
+    return [
+      {
+        label: "Desktop settings",
+        keywords: "preferences personalization",
+        icon: <IconSettings size={18} />,
+        onSelect: () => show(settingsDialog, getTrigger()),
+      },
+      {
+        label: "Rearrange apps",
+        keywords: "reorder organize move",
+        icon: <IconGripHorizontal size={18} />,
+        disabled: !apps.length,
+        onSelect: () => {
+          setEditing(true);
+          getTrigger()?.focus();
+        },
+      },
+      {
+        label: "New folder",
+        keywords: "create group organize",
+        icon: <IconFolderPlus size={18} />,
+        disabled: saving || !apps.length || preferences.folders.length >= 30,
+        onSelect: () => newFolder(getTrigger()),
+      },
+      {
+        label: "Customize dock",
+        keywords: "favorites pin shortcuts",
+        icon: <IconLayoutGrid size={18} />,
+        onSelect: () => show(dockDialog, getTrigger()),
+      },
+      {
+        label: "Change wallpaper",
+        keywords: "background theme appearance",
+        icon: <IconPhoto size={18} />,
+        onSelect: () => show(settingsDialog, getTrigger()),
+      },
+    ];
+  }
+  const searchActions = desktopActions(
+    () => searchDialog.current && returns.current.get(searchDialog.current),
+  ).filter((action) =>
+    `${action.label} ${action.keywords}`
+      .toLocaleLowerCase()
+      .includes(searchTerm),
+  );
+
   const actionsFor = (id: string): MenuAction[] => {
     const app = byId.get(id),
       folder = byFolder.get(id);
@@ -467,35 +516,7 @@ export function Desktop({
           onSelect: () => void dissolve(folder),
         },
       ];
-    const common: MenuAction[] = [
-      {
-        label: "Desktop settings",
-        icon: <IconSettings size={18} />,
-        onSelect: () => show(settingsDialog, account.current),
-      },
-      {
-        label: "Rearrange apps",
-        icon: <IconGripHorizontal size={18} />,
-        disabled: !apps.length,
-        onSelect: () => setEditing(true),
-      },
-      {
-        label: "New folder",
-        icon: <IconFolderPlus size={18} />,
-        disabled: saving || !apps.length || preferences.folders.length >= 30,
-        onSelect: () => newFolder(account.current),
-      },
-      {
-        label: "Customize dock",
-        icon: <IconLayoutGrid size={18} />,
-        onSelect: () => show(dockDialog, account.current),
-      },
-      {
-        label: "Change wallpaper",
-        icon: <IconPhoto size={18} />,
-        onSelect: () => show(settingsDialog, account.current),
-      },
-    ];
+    const common: MenuAction[] = desktopActions();
     if (id === "ui:account")
       common.push({
         label: "Sign out",
@@ -803,7 +824,7 @@ export function Desktop({
 
       <dialog
         className="desktop-dialog search-dialog"
-        aria-label="Search apps"
+        aria-label="Search apps and actions"
         ref={searchDialog}
         onClose={() => {
           setQuery("");
@@ -813,7 +834,7 @@ export function Desktop({
           if (["ArrowDown", "ArrowUp"].includes(event.key)) {
             const results = [
               ...(searchDialog.current?.querySelectorAll<HTMLElement>(
-                "[data-search-result]",
+                "[data-search-result]:not(:disabled)",
               ) ?? []),
             ];
             const index = results.indexOf(
@@ -832,7 +853,9 @@ export function Desktop({
           ) {
             event.preventDefault();
             searchDialog.current
-              ?.querySelector<HTMLElement>("[data-search-result]")
+              ?.querySelector<HTMLElement>(
+                "[data-search-result]:not(:disabled)",
+              )
               ?.click();
           }
         }}
@@ -840,25 +863,26 @@ export function Desktop({
         <div className="search-dialog-header">
           <IconSearch size={22} />
           <label className="sr-only" htmlFor="desktop-search">
-            Search your apps
+            Search apps and actions
           </label>
           <input
             id="desktop-search"
             ref={searchInput}
             value={query}
             onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search your apps"
+            placeholder="Search apps and actions"
             maxLength={120}
             autoComplete="off"
           />
           {closeButton(searchDialog, "Close search")}
         </div>
         <div className="search-results">
-          <div className="search-section-label">
-            {searchTerm
-              ? `${filtered.length + matchingFolders.length} results`
-              : "Apps"}
-          </div>
+          {(filtered.length > 0 || matchingFolders.length > 0) && (
+            <div className="search-section-label" role="heading" aria-level={3}>
+              Apps
+              <span>{filtered.length + matchingFolders.length}</span>
+            </div>
+          )}
           {matchingFolders.map((folder) => (
             <button
               data-search-result
@@ -900,13 +924,37 @@ export function Desktop({
               <IconExternalLink size={17} />
             </a>
           ))}
-          {!filtered.length && !matchingFolders.length && (
-            <div className="search-empty">
-              <IconSearch size={27} />
-              <strong>No apps found</strong>
-              <span>Try another app or folder name.</span>
+          {searchActions.length > 0 && (
+            <div className="search-section-label" role="heading" aria-level={3}>
+              Actions
+              <span>{searchActions.length}</span>
             </div>
           )}
+          {searchActions.map((action) => (
+            <button
+              data-search-result
+              className="search-result search-action"
+              key={action.label}
+              disabled={action.disabled}
+              onClick={() => {
+                searchDialog.current?.close();
+                action.onSelect();
+              }}
+            >
+              <span className="search-action-icon">{action.icon}</span>
+              <span>{action.label}</span>
+              <IconChevronRight size={18} />
+            </button>
+          ))}
+          {!filtered.length &&
+            !matchingFolders.length &&
+            !searchActions.length && (
+              <div className="search-empty">
+                <IconSearch size={27} />
+                <strong>No results found</strong>
+                <span>Try another app, folder, or action.</span>
+              </div>
+            )}
         </div>
         <div className="search-shortcuts">
           <span>↑ ↓ to navigate</span>
@@ -1016,6 +1064,16 @@ export function Desktop({
             browsers.
           </p>
         </section>
+        <p className="settings-icon-credit">
+          Icons:{" "}
+          <a
+            href="https://selfh.st/icons/"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            selfh.st
+          </a>
+        </p>
       </dialog>
       <dialog
         className="desktop-dialog dock-dialog"

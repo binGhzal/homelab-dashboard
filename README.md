@@ -5,10 +5,13 @@ OpenID Connect, open an app, organize your desktop into folders, pin favorites t
 the dock, search, and choose a wallpaper. Layouts follow your account across
 browsers. Optional weather uses your location only when you ask for it.
 
-The interface and code are independently authored. This is an app launcher, not
-an operating system, app installer, cluster administrator, or metrics dashboard.
-Use an authorized Grafana launcher for monitoring. It does not need application
-API keys, Kubernetes credentials, a Docker socket, or Dapr.
+The interface and code are independently authored. Optional cluster discovery
+adds installed apps automatically, filtered by each user's existing OpenID
+Connect permissions. Search includes desktop actions and settings. App artwork
+loads from the selfh.st collection with local fallbacks. The dashboard launches
+apps; installation and lifecycle management are outside its current scope.
+The default deployment needs no Kubernetes credentials. Opt-in discovery can use
+either scoped HTTPRoute read access or a projected file from an external controller.
 
 ## Try the local demo
 
@@ -112,15 +115,46 @@ Each linked application must independently enforce its own access policy.
 Hiding its launcher cannot secure the application's URL. Match dashboard groups
 to the gateway or application's real authorization rules.
 
-Official app artwork and its original licenses are documented in
-[the asset manifest](docs/licenses/brand-assets.md). Known apps use unmodified
-upstream artwork; unavailable marks use neutral initials. Application icons can
-use included SVGs or an operator-provided same-origin
+App artwork is resolved from the [selfh.st icon collection](https://selfh.st/icons/)
+using its published index. Resolution uses `iconSlug` when specified, otherwise an
+exact app ID or an unambiguous normalized app name. SVG is preferred, then WebP,
+then PNG. A missing index, unknown app or failed image falls back to `iconPath`,
+bundled artwork, then initials. Set `iconSource: local` on an app to skip remote
+lookups. The browser contacts the fixed jsDelivr selfh.st repository path without
+credentials or a referrer; that service sees the browser's IP and requested icon.
+Collection attribution and original asset licenses are documented in
+[the asset manifest](docs/licenses/brand-assets.md).
+
+Local artwork can use included SVGs or an operator-provided same-origin
 `/icons/<filename>.svg`, `.png` or `.webp`, baked into the image or mounted into
 the built client's icons directory. Only install trusted SVG files. `wallpaper`
 selects a same-origin asset under `/wallpapers`; users can choose that landscape
-or one of two built-in color backgrounds. No remote asset URLs or arbitrary
-upstream HTTP proxy are exposed.
+or one of two built-in color backgrounds. Arbitrary remote asset URLs and an
+upstream HTTP proxy are not accepted.
+
+## Automatic app discovery
+
+Discovery is disabled by default. Enable it for an explicit namespace list to
+read opted-in Gateway API HTTPRoutes, derive HTTPS launch links, and add or remove
+apps without rebuilding the dashboard or editing a second app list. Every route
+must include validated app metadata and an explicit access policy; route presence
+alone grants no access. The same server-side authorization applies to static and
+discovered apps, including search and saved layouts.
+
+The Helm chart supports `discovery.mode: kubernetes` with namespace-scoped
+HTTPRoute `get`/`list` permissions, or `discovery.mode: file` with a read-only
+ConfigMap snapshot and no Kubernetes credentials. See [the discovery contract
+and deployment examples](docs/discovery.md). An administrator can inspect the
+read-only `/api/discovery` status for sync state and aggregate counts.
+
+Static entries take precedence when IDs collide. Unavailable or stale discovery
+removes dynamic apps until the source recovers, while static apps remain usable.
+Saving layouts pauses during that outage so temporarily missing entries are not
+erased. The combined catalog supports up to 100 apps. Route acceptance confirms
+gateway configuration; it does not establish app health.
+
+The [feature roadmap](docs/feature-roadmap.md) compares the implemented desktop
+features with Umbrel and describes the next focused additions.
 
 ## Desktop, privacy and recovery
 
@@ -132,7 +166,7 @@ to the dock to pin it.
 Drag app tiles to reorder them or drop one into a folder. The options menu and
 Rearrange mode provide buttons for keyboard and touch, with `Alt + Left/Right`
 shortcuts on a focused tile. Folders can be renamed or removed while keeping their
-apps. Search opens with its button or `Ctrl/Cmd + K`; use arrow keys to navigate,
+apps. Search apps and desktop actions with its button or `Ctrl/Cmd + K`; use arrow keys to navigate,
 Enter to open and Escape to close. Dialogs return focus to their opening control.
 Save errors and stale-layout conflicts remain visible inside the open dialog.
 
@@ -184,20 +218,24 @@ pnpm test:browser
 
 Unit tests exercise real `openid-client` protocol handling with a local synthetic
 signing authority, state/nonce/PKCE failures, authorization isolation, CSRF,
-expiry, host/origin checks, revocation, SQLite persistence and revision conflicts,
-and telemetry attribute boundaries. Browser tests use a loopback-only demo and
-exercise desktop/mobile layout, folders, search, reordering, dock, wallpapers and
-cross-browser persistence. They make no requests to real media applications.
+expiry, host/origin checks, revocation, discovery validation and source failures,
+icon resolution and fallbacks, SQLite persistence and revision conflicts, and
+telemetry attribute boundaries. Browser tests use a loopback-only demo and
+exercise desktop/mobile layout, folders, app/action search, reordering, dock,
+wallpapers and cross-browser persistence. Dynamic icon responses are controlled
+fixtures; the tests make no requests to real media applications.
 
 A local Chromium executable can be selected with
 `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`; otherwise Playwright's installed browser is
 used. Browser screenshots default to `/tmp/dashboard-ui-revision`; set
 `DASHBOARD_QA_DIR` to choose another output directory. The selected synthetic
-review captures in [docs/review](docs/review/desktop-revision.md) document this UI
-revision; generated test reports remain outside version control.
+review captures document the [desktop revision](docs/review/desktop-revision.md)
+and [dynamic icons and action search](docs/review/discovery-and-icons.md);
+generated test reports remain outside version control.
 
 With Helm available, run `node scripts/validate-chart.mjs` to check deployment
-structure, inline and external catalogs, persistent storage, and routing options.
+structure, inline and external catalogs, persistent storage, routing, and the
+optional discovery modes and their scoped permissions.
 Set `HELM_BIN` if Helm is outside your executable path.
 
 CI builds and tests the production image, checks the Helm package and deployment
